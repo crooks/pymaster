@@ -23,6 +23,7 @@
 import struct
 import random
 import sys
+import os.path
 import timing
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
@@ -48,6 +49,9 @@ class secret_key():
         f.close()
 
     def pem_import(self, fn):
+        if not os.path.isfile(fn):
+            print "PEM Import: %s file not found"
+            sys.exit(1)
         f = open(fn, 'r')
         pem = f.read()
         return RSA.importKey(pem)
@@ -178,6 +182,9 @@ class message():
             ivs = info[0:152]
             addy = info[152:232]
             rest = info[232:]
+            # Checksum includes everything up to the Message Digest.
+            # Don't forget this needs to include the timestamp!
+            checksum = decrypted[0:280]
             print "Next Hop: %s" % addy
         elif packettype == 1:
             """Packet type 1 (final hop):
@@ -187,6 +194,7 @@ class message():
             message_id = info[0:16]
             iv = info[16:24]
             rest = info[24:]
+            checksum = decrypted[0:72]
         elif packettype == 2:
             """Packet type 2 (final hop, partial message):
                Chunk number                   [  1 byte ]
@@ -199,11 +207,15 @@ class message():
             message_id = info[2:18]
             iv = info[18:26]
             rest = info[26:]
+            checksum = decrypted[0:74]
         else:
             print "Unknown Packet type"
             sys.exit(1)
         timestamp = rest[0:7]
-        digest = rest[7:23]
+        msgdigest = rest[7:23]
+        if MD5.new(data=checksum).digest() != msgdigest:
+            print "Encrypted message component failed checksum"
+            sys.exit(1)
 
     def unpack(self):
         """Unpack a received Mixmaster email message.
