@@ -28,34 +28,6 @@ from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
 
-def padding(string, length, pad="\x00"):
-    padded = string.ljust(length, pad)
-    if len(padded) < len(string):
-        print "Padded shorter than input!"
-    return padded
-
-
-class header():
-    def __init__(self):
-        """Public key ID                [  16 bytes]
-           Length of RSA-encrypted data [   1 byte ]
-           RSA-encrypted session key    [ 128 bytes]
-           Initialization vector        [   8 bytes]
-           Encrypted header part        [ 328 bytes]
-           Padding                      [  31 bytes]
-        """
-
-        self.header_format = "@16sB128s8s328s31s"
-
-    def unpack(self, headbytes):
-        if len(headbytes) != 512:
-            print "Incorrect header length: %s Bytes" % len(headbytes)
-            sys.exit(1)
-        (keyid, lenrsa, rsakey,
-        iv, head, pad) = struct.unpack(self.header_format, headbytes)
-        #des = crypto.cipher.DES3.new(decryptionkey, DES3.MODE_CBC, IV=iv)
-        return lenrsa
-
 class secret_key():
     def big_endian(self, byte_array):
         """Convert a Big-Endian Byte-Array to a long int."""
@@ -63,6 +35,22 @@ class secret_key():
         for b in byte_array:
             x = (x << 8) + b
         return x
+
+    def pem_export(self, keyobj, fn):
+        public = keyobj.publickey()
+        secpem = keyobj.exportKey(format='PEM')
+        pubpem = public.exportKey(format='PEM')
+        f = open(fn, 'w')
+        f.write(secpem)
+        f.write("\n\n")
+        f.write(pubpem)
+        f.write("\n")
+        f.close()
+
+    def pem_import(self, fn):
+        f = open(fn, 'r')
+        pem = f.read()
+        return RSA.importKey(pem)
 
     def generate(self):
         k = RSA.generate(1024)
@@ -75,7 +63,6 @@ class secret_key():
     def construct(self, key):
         """Take a binary Mixmaster secret key and return an RSAobj
         """
-        s = ">128B"
         l = struct.unpack("<H", key[0:2])[0]
         n = self.big_endian(struct.unpack('>128B', key[2:130]))
         e = self.big_endian(struct.unpack('>128B', key[130:258]))
@@ -89,7 +76,7 @@ class secret_key():
             print "Invalid key structure (p < q)"
         return RSA.construct((n, e, d, p, q))
 
-    def read(self):
+    def read_secring(self):
         """Read a secring.mix file and return the decryted keys.  This
         function relies on construct() to create an RSAobj.
 
@@ -163,7 +150,9 @@ class message():
         """
 
         sk = secret_key()
-        seckey = sk.read()
+        #seckey = sk.read_secring()
+        #sk.pem_export(seckey, "keys.pem")
+        seckey = sk.pem_import("keys.pem")
         self.pkcs1 = PKCS1_v1_5.new(seckey)
 
     def encrypted_header(self, decrypted):
