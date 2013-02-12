@@ -58,6 +58,7 @@ class header():
 
 class secret_key():
     def big_endian(self, byte_array):
+        """Convert a Big-Endian Byte-Array to a long int."""
         x = long(0)
         for b in byte_array:
             x = (x << 8) + b
@@ -76,17 +77,16 @@ class secret_key():
         """
         s = ">128B"
         l = struct.unpack("<H", key[0:2])[0]
-        print l
         n = self.big_endian(struct.unpack('>128B', key[2:130]))
         e = self.big_endian(struct.unpack('>128B', key[130:258]))
         d = self.big_endian(struct.unpack('>128B', key[258:386]))
         p = self.big_endian(struct.unpack('>64B', key[386:450]))
         q = self.big_endian(struct.unpack('>64B', key[450:514]))
         if n - (p * q) != 0:
-            "Invalid key structure (n - (p * q) != 0)"
+            print "Invalid key structure (n - (p * q) != 0)"
             sys.exit(1)
         if p < q:
-            "Invalid key structure (p < q)"
+            print "Invalid key structure (p < q)"
         return RSA.construct((n, e, d, p, q))
 
     def read(self):
@@ -141,12 +141,15 @@ class secret_key():
         des = DES3.new(pwhash, DES3.MODE_CBC, IV=iv)
         decrypted_key = des.decrypt(keybin)
         # The decrypted key should always be 712 Bytes
-        if len(decrypted_key) == 712:
-            print "secring: Decrypted key is the correct length!"
+        if len(decrypted_key) != 712:
+            print "secring: Decrypted key is incorrect length!"
+            sys.exit(1)
         # The 256 Byte keyid is generated from the key so we can validate
         # it here.
-        if MD5.new(data=decrypted_key[2:258]).hexdigest() == keyid:
-            print "secring: Hey, Key hash matches keyid.  That's good!"
+        if MD5.new(data=decrypted_key[2:258]).hexdigest() != keyid:
+            print ("secring: Checksum failed.  Decrypted hash does not "
+                   "match keyid.")
+            sys.exit(1)
         return self.construct(decrypted_key)
 
 class message():
@@ -236,15 +239,16 @@ class message():
             digest = f.readline().rstrip().decode("base64")
             packet = f.read().decode("base64")
         f.close()
-        if length == len(packet):
-            print "Hey, length = packet length!"
-        if digest == MD5.new(data=packet).digest():
-            print "Hey, MD5 digest checks out!"
+        if length != len(packet):
+            print "Message unpack: Stated packet length is incorrect"
+            sys.exit(1)
+        if digest != MD5.new(data=packet).digest():
+            print "Message unpack: Checksum failed"
+            sys.exit(1)
         header = packet[:512]
         header_format = "@16sB128s8s328s31s"
         (keyid, datalen, sesskey,
          iv, enc, pad) = struct.unpack(header_format, header)
-        print keyid.encode("hex")
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
         # Now use the decrypted 3DES key to decrypt the 328 Bytes
