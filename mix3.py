@@ -28,6 +28,7 @@ import timing
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
+import Crypto.Random
 
 class secret_key():
     def big_endian(self, byte_array):
@@ -193,6 +194,7 @@ class message():
         header_format = "@16sB128s8s328s"
         (keyid, datalen, sesskey, iv,
          enc) = struct.unpack(header_format, packet[0:481])
+        print keyid.encode("hex")
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
         headers = self.encrypted_header(deskey, iv, enc)
@@ -203,7 +205,11 @@ class message():
             sbyte = (n + 1) * 512
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=headers[3][n])
             new_headers.append(desobj.decrypt(packet[sbyte:sbyte + 512]))
-        body = desobj.decrypt(packet[10240:])
+        new_headers.append(desobj.decrypt(packet[10240:]))
+        head_string = ''.join(new_headers)
+        head_string += Crypto.Random.get_random_bytes(512)
+        if len(head_string) != 20480:
+            print "Incorrect length on reconstructed packet"
 
     def encrypted_header(self, deskey, iv, encrypted):
         """Packet ID                            [ 16 bytes]
