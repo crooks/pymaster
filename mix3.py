@@ -189,29 +189,49 @@ class message():
         if digest != MD5.new(data=packet).digest():
             print "Message unpack: Checksum failed"
             sys.exit(1)
-        # Unpack the components of each header.  This includes the 328 Byte
-        # encrypted component.  We can ignore the 31 Bytes of padding.
-        header_format = "@16sB128s8s328s"
+        # Unpack the header components.  This includes the 328 Byte
+        # encrypted component.  We can ignore the 31 Bytes of padding, hence
+        # 481 Bytes instead of 512.
         (keyid, datalen, sesskey, iv,
-         enc) = struct.unpack(header_format, packet[0:481])
-        print keyid.encode("hex")
+         enc) = struct.unpack('@16sB128s8s328s', packet[0:481])
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
-        headers = self.encrypted_header(deskey, iv, enc)
+        # Process the 328 Bytes of encrypted header using our newly discovered
+        # 3DES key obtained from the pkcs1 decryption.
+        headers = self.encrypted_first_header(deskey, iv, enc)
+        if headers[2] == 0:
+            self.intermediate_message(headers, packet)
+        elif headers[2] == 1:
+            self.final_hop(headers)
+        elif headers[2] == 2:
+            self.partial_final(headers)
+        else:
+            print "Unknown packet type identifier"
+            sys.exit(1)
+
+    def intermediate_message(self, headers, packet):
+        # headers[3] is a list of the packet information component.  The last
+        # element of that list is the next hop address.
         nexthop = headers[3].pop()
+        # headers[1] is the 24 Byte Symmetric 3DES key required to decrypt all
+        # the remaining packet headers.
         deskey = headers[1]
         new_headers = []
+        # Decrypt each 512 Byte packet header using the 3DES key and a sequence
+        # of IVs held in the packet information.
         for n in range(19):
             sbyte = (n + 1) * 512
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=headers[3][n])
             new_headers.append(desobj.decrypt(packet[sbyte:sbyte + 512]))
+        # The message body uses the same 3DES key and IV as the last header/
+        # As we already have a desobj for this, it's easy!
         new_headers.append(desobj.decrypt(packet[10240:]))
         head_string = ''.join(new_headers)
         head_string += Crypto.Random.get_random_bytes(512)
         if len(head_string) != 20480:
             print "Incorrect length on reconstructed packet"
 
-    def encrypted_header(self, deskey, iv, encrypted):
+    def encrypted_first_header(self, deskey, iv, encrypted):
         """Packet ID                            [ 16 bytes]
            Triple-DES key                       [ 24 bytes]
            Packet type identifier               [  1 byte ]
