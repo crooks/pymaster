@@ -197,6 +197,12 @@ class message():
         # Now use the decrypted 3DES key to decrypt the 328 Bytes
         desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
         self.encrypted_header(desobj, enc)
+        headers = []
+        # Decrypt each of the remaining 19 512Byte headers using the session
+        # key we got from the first header.
+        for h in range(19):
+            sbyte = (h + 1) * 512
+            headers.append(desobj.decrypt(packet[sbyte:sbyte + 512]))
 
     def encrypted_header(self, desobj, encrypted):
         """Packet ID                            [ 16 bytes]
