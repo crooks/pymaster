@@ -188,23 +188,24 @@ class message():
         if digest != MD5.new(data=packet).digest():
             print "Message unpack: Checksum failed"
             sys.exit(1)
-        header = packet[:512]
-        header_format = "@16sB128s8s328s31s"
-        (keyid, datalen, sesskey,
-         iv, enc, pad) = struct.unpack(header_format, header)
+        # Unpack the components of each header.  This includes the 328 Byte
+        # encrypted component.  We can ignore the 31 Bytes of padding.
+        header_format = "@16sB128s8s328s"
+        (keyid, datalen, sesskey, iv,
+         enc) = struct.unpack(header_format, packet[0:481])
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
-        # Now use the decrypted 3DES key to decrypt the 328 Bytes
-        desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-        self.encrypted_header(desobj, enc)
-        headers = []
-        # Decrypt each of the remaining 19 512Byte headers using the session
-        # key we got from the first header.
-        for h in range(19):
-            sbyte = (h + 1) * 512
-            headers.append(desobj.decrypt(packet[sbyte:sbyte + 512]))
+        headers = self.encrypted_header(deskey, iv, enc)
+        nexthop = headers[3].pop()
+        deskey = headers[1]
+        new_headers = []
+        for n in range(19):
+            sbyte = (n + 1) * 512
+            desobj = DES3.new(deskey, DES3.MODE_CBC, IV=headers[3][n])
+            new_headers.append(desobj.decrypt(packet[sbyte:sbyte + 512]))
+        body = desobj.decrypt(packet[10240:])
 
-    def encrypted_header(self, desobj, encrypted):
+    def encrypted_header(self, deskey, iv, encrypted):
         """Packet ID                            [ 16 bytes]
            Triple-DES key                       [ 24 bytes]
            Packet type identifier               [  1 byte ]
@@ -213,19 +214,27 @@ class message():
            Message digest                       [ 16 bytes]
            Random padding               [fill to 328 bytes]
         """
+        desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
         decrypted = desobj.decrypt(encrypted)
         if len(decrypted) != 328:
             print "unpack: Incorrect number of Bytes decrypted"
             sys.exit(1)
-        (packetid, deskey,
-         packettype) = struct.unpack("@16s24s1B", decrypted[0:41])
-        if packettype == 0:
+        header = list(struct.unpack("@16s24sB", decrypted[0:41]))
+        if header[2] == 0:
             """Packet type 0 (intermediate hop):
                19 Initialization vectors      [152 bytes]
                Remailer address               [ 80 bytes]
             """
-            (ivs, addy, timestamp,
+            (nineteen_ivs, addy, timestamp,
              msgdigest) = struct.unpack('@152s80s7s16s', decrypted[41:296])
+            # Put the IVs into individual list items, starting at header[3]
+            packet_info = []
+            for i in range(19):
+                sbyte = i * 8
+                packet_info.append(nineteen_ivs[sbyte:sbyte + 8])
+            packet_info.append(addy)
+            header.append(packet_info)
+            header.append(timestamp)
             # Checksum includes everything up to the Message Digest.
             # Don't forget this needs to include the 7 Byte Timestamp!
             checksum = MD5.new(data=decrypted[0:280]).digest()
@@ -237,6 +246,11 @@ class message():
             """
             (message_id, iv, timestamp,
              msgdigest) = struct.unpack('@16s8s7s16s', decrypted[41:88])
+            packet_info = []
+            packet_info.append(message_id)
+            packet_info.append(iv)
+            header.append(packet_info)
+            header.append(timestamp)
             checksum = MD5.new(data=decrypted[0:72]).digest()
         elif packettype == 2:
             """Packet type 2 (final hop, partial message):
@@ -247,6 +261,13 @@ class message():
             """
             (chunk, chunks, message_id, iv, timestamp,
              msgdigest) = struct.unpack('@BB16s8s7s16s', decrypted[41:90])
+            packet_info = []
+            packet_info.append(chunk)
+            packet_info.append(chunks)
+            packet_info.append(message_id)
+            packet_info.append(iv)
+            header.append(packet_info)
+            header.append(timestamp)
             checksum = MD5.new(data=decrypted[0:74]).digest()
         else:
             print "Unknown Packet type"
@@ -254,6 +275,10 @@ class message():
         if checksum != msgdigest:
             print "Encrypted message component failed checksum"
             sys.exit(1)
+        if len(header) != 5:
+            print "header list contains incorrect number of elements"
+            sys.exit(1)
+        return header
 
 def randbytes(n):
     b = ''.join(chr(random.randint(0,255)) for _ in range(n))
