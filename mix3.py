@@ -25,6 +25,7 @@ import random
 import sys
 import os.path
 import timing
+import mailbox
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
@@ -160,7 +161,39 @@ class message():
         seckey = sk.pem_import("keys.pem")
         self.pkcs1 = PKCS1_v1_5.new(seckey)
 
-    def unpack(self):
+    def process_mailbox(self):
+        inbox = mailbox.Maildir('~/tmp', factory=None, create=False)
+        for key in inbox.iterkeys():
+            msgtxt = inbox.get_string(key)
+            mixmes = False
+            for line in msgtxt.split("\n"):
+                if line.startswith("-----BEGIN REMAILER MESSAGE-----"):
+                    if mixmes:
+                        print "Got Begin Message cutmarks while in a message!"
+                        sys.exit(1)
+                    else:
+                        mixmes = True
+                        line_index = 0
+                        packet = ""
+                        message_parts = []
+                        continue
+                if mixmes:
+                    line_index += 1
+                    if line_index == 1:
+                        message_parts.append(int(line))
+                    elif line_index == 2:
+                        message_parts.append(line.decode("base64"))
+                    elif line.startswith("-----END REMAILER MESSAGE-----"):
+                        message_parts.append(packet.decode("base64"))
+                        break
+                    else:
+                        packet += line
+            if not mixmes:
+                print "This isn't a Mixmaster message!"
+                continue
+            self.unpack(message_parts)
+
+    def unpack(self, message_parts):
         """Unpack a received Mixmaster email message.
 
         Public key ID                [  16 bytes]
@@ -171,24 +204,13 @@ class message():
         Padding                      [  31 bytes]
         """
 
-        src = "/home/crooks/tmp/1360506803.13262_0.snorky"
-        f = open(src, 'r')
-        mixmes = False
-        while f:
-            if f.readline().startswith("-----BEGIN REMAILER MESSAGE-----"):
-                mixmes = True
-                break
-        if mixmes:
-            length = int(f.readline())
-            digest = f.readline().rstrip().decode("base64")
-            packet = f.read().decode("base64")
-        f.close()
-        if length != len(packet):
+        if message_parts[0] != len(message_parts[2]):
             print "Message unpack: Stated packet length is incorrect"
             sys.exit(1)
-        if digest != MD5.new(data=packet).digest():
+        if message_parts[1] != MD5.new(data=message_parts[2]).digest():
             print "Message unpack: Checksum failed"
             sys.exit(1)
+        packet = message_parts[2]
         # Unpack the header components.  This includes the 328 Byte
         # encrypted component.  We can ignore the 31 Bytes of padding, hence
         # 481 Bytes instead of 512.
@@ -202,7 +224,9 @@ class message():
         if headers[2] == 0:
             self.intermediate_message(headers, packet)
         elif headers[2] == 1:
-            self.final_hop(headers)
+            print "This is an exit message."
+            pass
+            #self.final_hop(headers)
         elif headers[2] == 2:
             self.partial_final(headers)
         else:
@@ -265,7 +289,7 @@ class message():
             # Don't forget this needs to include the 7 Byte Timestamp!
             checksum = MD5.new(data=decrypted[0:280]).digest()
             print "Next Hop: %s" % addy
-        elif packettype == 1:
+        elif header[2] == 1:
             """Packet type 1 (final hop):
                Message ID                     [ 16 bytes]
                Initialization vector          [  8 bytes]
@@ -278,7 +302,7 @@ class message():
             header.append(packet_info)
             header.append(timestamp)
             checksum = MD5.new(data=decrypted[0:72]).digest()
-        elif packettype == 2:
+        elif header[2] == 2:
             """Packet type 2 (final hop, partial message):
                Chunk number                   [  1 byte ]
                Number of chunks               [  1 byte ]
@@ -317,4 +341,4 @@ def randbytes(n):
 #print result
 
 m = message()
-m.unpack()
+m.process_mailbox()
