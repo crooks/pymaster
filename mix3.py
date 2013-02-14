@@ -31,6 +31,9 @@ from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
 import Crypto.Random
 
+class ValidationError(Exception):
+    pass
+
 class secret_key():
     def big_endian(self, byte_array):
         """Convert a Big-Endian Byte-Array to a long int."""
@@ -160,40 +163,71 @@ class message():
         #sk.pem_export(seckey, "keys.pem")
         seckey = sk.pem_import("keys.pem")
         self.pkcs1 = PKCS1_v1_5.new(seckey)
+        self.inbox = mailbox.Maildir('~/tmp', factory=None, create=False)
 
     def process_mailbox(self):
-        inbox = mailbox.Maildir('~/tmp', factory=None, create=False)
-        for key in inbox.iterkeys():
-            msgtxt = inbox.get_string(key)
-            mixmes = False
-            for line in msgtxt.split("\n"):
-                if line.startswith("-----BEGIN REMAILER MESSAGE-----"):
-                    if mixmes:
-                        print "Got Begin Message cutmarks while in a message!"
-                        sys.exit(1)
-                    else:
-                        mixmes = True
-                        line_index = 0
-                        packet = ""
-                        message_parts = []
-                        continue
-                if mixmes:
-                    line_index += 1
-                    if line_index == 1:
-                        message_parts.append(int(line))
-                    elif line_index == 2:
-                        message_parts.append(line.decode("base64"))
-                    elif line.startswith("-----END REMAILER MESSAGE-----"):
-                        message_parts.append(packet.decode("base64"))
-                        break
-                    else:
-                        packet += line
-            if not mixmes:
-                print "This isn't a Mixmaster message!"
-                continue
-            self.unpack(message_parts)
+        # Iterate over each message in the inbox.  This loop effectively
+        # envelops all processing.
+        for key in self.inbox.iterkeys():
+            try:
+                self.mailbox_message(key)
+            except ValidationError, e:
+                print e
 
-    def unpack(self, message_parts):
+    def mailbox_message(self, key):
+        """-----BEGIN REMAILER MESSAGE-----
+           [packet length ]
+           [message digest]
+           [encoded packet]
+           -----END REMAILER MESSAGE-----
+        """
+
+        msgtxt = self.inbox.get_string(key)
+        mixmes = False
+        for line in msgtxt.split("\n"):
+            if line.startswith("-----BEGIN REMAILER MESSAGE-----"):
+                if mixmes:
+                    raise ValidationError("Corrupted. Got multiple Begin "
+                                          "Message cutmarks.")
+                else:
+                    # This is the beginning of a Mixmaster message.  The
+                    # following variables are reset once a message is
+                    # identified as a candidate.
+                    mixmes = True # True when inside a Mixmaster payload
+                    line_index = 0 # Packet line counter
+                    packet = "" # Packet payload (in Base64)
+                    continue
+            if mixmes:
+                line_index += 1
+                if line_index == 1:
+                    # Message length in Decimal
+                    length = int(line)
+                elif line_index == 2:
+                    #Message Digest in Base64
+                    digest = line.decode("base64")
+                elif line.startswith("-----END REMAILER MESSAGE-----"):
+                    # We don't care what comes after the End Cutmarks
+                    break
+                else:
+                    # Append a Base64 line to the packet.
+                    packet += line
+        if not mixmes:
+            # There is no Begin Cutmark in the message.  Not an issue.  Just
+            # means this isn't a Mixmaster message.
+            raise ValidationError("EOF without Begin Cutmark.")
+        packet = packet.decode("base64")
+        # Validate the length and digest of the packet.
+        if length != len(packet):
+            raise ValidationError("Incorrect packet Length")
+        if digest != MD5.new(data=packet).digest():
+            raise ValidationError("Mixmaster message digest failed")
+        # Pass the list of message parts on for further processing.
+        try:
+            self.unpack(packet)
+        except ValidationError, msg:
+            print msg
+
+    def unpack(self, packet):
         """Unpack a received Mixmaster email message.
 
         Public key ID                [  16 bytes]
@@ -204,13 +238,6 @@ class message():
         Padding                      [  31 bytes]
         """
 
-        if message_parts[0] != len(message_parts[2]):
-            print "Message unpack: Stated packet length is incorrect"
-            sys.exit(1)
-        if message_parts[1] != MD5.new(data=message_parts[2]).digest():
-            print "Message unpack: Checksum failed"
-            sys.exit(1)
-        packet = message_parts[2]
         # Unpack the header components.  This includes the 328 Byte
         # encrypted component.  We can ignore the 31 Bytes of padding, hence
         # 481 Bytes instead of 512.
@@ -220,18 +247,16 @@ class message():
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
         # Process the 328 Bytes of encrypted header using our newly discovered
         # 3DES key obtained from the pkcs1 decryption.
-        headers = self.encrypted_first_header(deskey, iv, enc)
+        headers = self.decrypt_first_header(deskey, iv, enc)
+            
         if headers[2] == 0:
             self.intermediate_message(headers, packet)
         elif headers[2] == 1:
-            print "This is an exit message."
             result = self.final_message(headers, packet)
-            #self.final_hop(headers)
         elif headers[2] == 2:
             self.partial_final(headers)
         else:
-            print "Unknown packet type identifier"
-            sys.exit(1)
+            raise ValidationError("Unknown packet type identifier")
 
     def intermediate_message(self, headers, packet):
         # headers[3] is a list of the packet information component.  The last
@@ -253,7 +278,7 @@ class message():
         head_string = ''.join(new_headers)
         head_string += Crypto.Random.get_random_bytes(512)
         if len(head_string) != 20480:
-            print "Incorrect length on reconstructed packet"
+            raise ValidationError("Incorrect outbound Byte length")
 
     def final_message(self, headers, packet):
         deskey = headers[1]
@@ -272,24 +297,23 @@ class message():
         ebyte = sbyte + 1
         if destlist[0].startswith("null:"):
             print "Dummy Message"
-            return 0
-        for d in destlist:
-            print "Destination: %s" % d.rstrip("\x00")
-        hfields = struct.unpack('B', body[sbyte])[0]
-        heads = "80s" * hfields
-        sbyte = ebyte
-        ebyte = sbyte + 80 * hfields
-        headlist = struct.unpack(heads, body[sbyte:ebyte])
-        for h in headlist:
-            print "Header: %s" % d.rstrip("\x00")
-        sbyte = ebyte
-        # The length of the message is prepended by the 4 Byte length, hence
-        # why we need to add 4 to ebyte.
-        ebyte = length + 4
-        print sbyte, length
-        print body[sbyte:length + 4]
+        else:
+            for d in destlist:
+                print "Destination: %s" % d.rstrip("\x00")
+            hfields = struct.unpack('B', body[sbyte])[0]
+            heads = "80s" * hfields
+            sbyte = ebyte
+            ebyte = sbyte + 80 * hfields
+            headlist = struct.unpack(heads, body[sbyte:ebyte])
+            for h in headlist:
+                print "Header: %s" % d.rstrip("\x00")
+            sbyte = ebyte
+            # The length of the message is prepended by the 4 Byte length,
+            # hence why we need to add 4 to ebyte.
+            ebyte = length + 4
+            print body[sbyte:length + 4]
 
-    def encrypted_first_header(self, deskey, iv, encrypted):
+    def decrypt_first_header(self, deskey, iv, encrypted):
         """Packet ID                            [ 16 bytes]
            Triple-DES key                       [ 24 bytes]
            Packet type identifier               [  1 byte ]
@@ -297,12 +321,18 @@ class message():
            Timestamp                            [  7 bytes]
            Message digest                       [ 16 bytes]
            Random padding               [fill to 328 bytes]
+
+        Regardless of the Packet Type, this function will always return a list
+        of 5 elements.  Those being, ID, 3DESkey, TypeID, Packet_info and
+        Timestamp.
+        The Message Digest is only used for validation within the function.
+        The Packet_Info is a flexible list of elements depending on the
+        TypeID.
         """
         desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
         decrypted = desobj.decrypt(encrypted)
         if len(decrypted) != 328:
-            print "unpack: Incorrect number of Bytes decrypted"
-            sys.exit(1)
+            raise ValidationError("Incorrect number of Bytes decrypted")
         header = list(struct.unpack("@16s24sB", decrypted[0:41]))
         if header[2] == 0:
             """Packet type 0 (intermediate hop):
@@ -354,14 +384,11 @@ class message():
             header.append(timestamp)
             checksum = MD5.new(data=decrypted[0:74]).digest()
         else:
-            print "Unknown Packet type"
-            sys.exit(1)
+            raise ValidationError("Unknown Packet type")
         if checksum != msgdigest:
-            print "Encrypted message component failed checksum"
-            sys.exit(1)
+            raise ValidationError("Encrypted header failed checksum")
         if len(header) != 5:
-            print "header list contains incorrect number of elements"
-            sys.exit(1)
+            raise ValidationError("Incorrect number of decrypted headers")
         return header
 
 def randbytes(n):
