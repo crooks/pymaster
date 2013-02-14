@@ -221,10 +221,11 @@ class message():
             print msg
 
     def unpack(self, packet):
-
         headers = self.first_header(packet[0:481])
         if headers[2] == 0:
-            self.intermediate_message(headers, packet)
+            self.intermediate_message(headers,
+                                      packet[512:10240],
+                                      packet[10240:])
         elif headers[2] == 1:
             result = self.final_message(headers, packet[10240:])
         elif headers[2] == 2:
@@ -232,27 +233,32 @@ class message():
         else:
             raise ValidationError("Unknown packet type identifier")
 
-    def intermediate_message(self, headers, packet):
+    def intermediate_message(self, headers, headbytes, bodybytes):
         # headers[3] is a list of the packet information component.  The last
         # element of that list is the next hop address.
         nexthop = headers[3].pop()
         # headers[1] is the 24 Byte Symmetric 3DES key required to decrypt all
         # the remaining packet headers.
         deskey = headers[1]
-        new_headers = []
+        head_string = ""
         # Decrypt each 512 Byte packet header using the 3DES key and a sequence
         # of IVs held in the packet information.
         for n in range(19):
-            sbyte = (n + 1) * 512
+            sbyte = n * 512
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=headers[3][n])
-            new_headers.append(desobj.decrypt(packet[sbyte:sbyte + 512]))
+            head_string += desobj.decrypt(headbytes[sbyte:sbyte + 512])
+        # Add a fake 512 byte header to the bottom of the header stack. This
+        # replaces the first header that we removed.
+        head_string += Crypto.Random.get_random_bytes(512)
+        if len(head_string) != 10240:
+            raise Exception("Incorrect header length: %s"
+                             % len(head_string))
         # The message body uses the same 3DES key and IV as the last header/
         # As we already have a desobj for this, it's easy!
-        new_headers.append(desobj.decrypt(packet[10240:]))
-        head_string = ''.join(new_headers)
-        head_string += Crypto.Random.get_random_bytes(512)
+        head_string += desobj.decrypt(bodybytes)
         if len(head_string) != 20480:
-            raise ValidationError("Incorrect outbound Byte length")
+            raise Exception("Incorrect outbound Byte length: %s"
+                                   % len(head_string))
 
     def final_message(self, headers, encbody):
         """ Length                         [       4 bytes]
@@ -294,7 +300,7 @@ class message():
             ebyte = length + 4
             print body[sbyte:length + 4]
 
-    def first_header(self, rawbytes):
+    def first_header(self, first_header_bytes):
         """Unpack a received Mixmaster email message.
 
            Public key ID                [  16 bytes]
@@ -315,7 +321,7 @@ class message():
         # encrypted component.  We can ignore the 31 Bytes of padding, hence
         # 481 Bytes instead of 512.
         (keyid, datalen, sesskey, iv,
-         enc) = struct.unpack('@16sB128s8s328s', rawbytes)
+         enc) = struct.unpack('@16sB128s8s328s', first_header_bytes)
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
         if len(deskey) != 24:
