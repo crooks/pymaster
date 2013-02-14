@@ -225,7 +225,7 @@ class message():
             self.intermediate_message(headers, packet)
         elif headers[2] == 1:
             print "This is an exit message."
-            pass
+            result = self.final_message(headers, packet)
             #self.final_hop(headers)
         elif headers[2] == 2:
             self.partial_final(headers)
@@ -254,6 +254,40 @@ class message():
         head_string += Crypto.Random.get_random_bytes(512)
         if len(head_string) != 20480:
             print "Incorrect length on reconstructed packet"
+
+    def final_message(self, headers, packet):
+        deskey = headers[1]
+        mid = headers[3][0]
+        iv = headers[3][1]
+        desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
+        body = desobj.decrypt(packet[10240:])
+        sbyte = 0
+        ebyte = 5
+        length,dfields = struct.unpack('<IB', body[sbyte:ebyte])
+        dests = "80s" * dfields
+        sbyte = ebyte
+        ebyte = sbyte + (80 * dfields)
+        destlist = struct.unpack(dests, body[sbyte:ebyte])
+        sbyte = ebyte
+        ebyte = sbyte + 1
+        if destlist[0].startswith("null:"):
+            print "Dummy Message"
+            return 0
+        for d in destlist:
+            print "Destination: %s" % d.rstrip("\x00")
+        hfields = struct.unpack('B', body[sbyte])[0]
+        heads = "80s" * hfields
+        sbyte = ebyte
+        ebyte = sbyte + 80 * hfields
+        headlist = struct.unpack(heads, body[sbyte:ebyte])
+        for h in headlist:
+            print "Header: %s" % d.rstrip("\x00")
+        sbyte = ebyte
+        # The length of the message is prepended by the 4 Byte length, hence
+        # why we need to add 4 to ebyte.
+        ebyte = length + 4
+        print sbyte, length
+        print body[sbyte:length + 4]
 
     def encrypted_first_header(self, deskey, iv, encrypted):
         """Packet ID                            [ 16 bytes]
