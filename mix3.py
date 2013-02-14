@@ -150,13 +150,6 @@ class secret_key():
 
 class message():
     def __init__(self):
-        """ Length                         [       4 bytes]
-            Number of destination fields   [        1 byte]
-            Destination fields             [ 80 bytes each]
-            Number of header line fields   [        1 byte]
-            Header lines fields            [ 80 bytes each]
-            User data section              [ up to ~2.5 MB]
-        """
 
         sk = secret_key()
         #seckey = sk.read_secring()
@@ -228,31 +221,12 @@ class message():
             print msg
 
     def unpack(self, packet):
-        """Unpack a received Mixmaster email message.
 
-        Public key ID                [  16 bytes]
-        Length of RSA-encrypted data [   1 byte ]
-        RSA-encrypted session key    [ 128 bytes]
-        Initialization vector        [   8 bytes]
-        Encrypted header part        [ 328 bytes]
-        Padding                      [  31 bytes]
-        """
-
-        # Unpack the header components.  This includes the 328 Byte
-        # encrypted component.  We can ignore the 31 Bytes of padding, hence
-        # 481 Bytes instead of 512.
-        (keyid, datalen, sesskey, iv,
-         enc) = struct.unpack('@16sB128s8s328s', packet[0:481])
-        # Use the session key to decrypt the 3DES Symmetric key
-        deskey = self.pkcs1.decrypt(sesskey, "Failed")
-        # Process the 328 Bytes of encrypted header using our newly discovered
-        # 3DES key obtained from the pkcs1 decryption.
-        headers = self.decrypt_first_header(deskey, iv, enc)
-            
+        headers = self.first_header(packet[0:481])
         if headers[2] == 0:
             self.intermediate_message(headers, packet)
         elif headers[2] == 1:
-            result = self.final_message(headers, packet)
+            result = self.final_message(headers, packet[10240:])
         elif headers[2] == 2:
             self.partial_final(headers)
         else:
@@ -280,12 +254,19 @@ class message():
         if len(head_string) != 20480:
             raise ValidationError("Incorrect outbound Byte length")
 
-    def final_message(self, headers, packet):
+    def final_message(self, headers, encbody):
+        """ Length                         [       4 bytes]
+            Number of destination fields   [        1 byte]
+            Destination fields             [ 80 bytes each]
+            Number of header line fields   [        1 byte]
+            Header lines fields            [ 80 bytes each]
+            User data section              [ up to ~2.5 MB]
+        """
         deskey = headers[1]
         mid = headers[3][0]
         iv = headers[3][1]
         desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-        body = desobj.decrypt(packet[10240:])
+        body = desobj.decrypt(encbody)
         sbyte = 0
         ebyte = 5
         length,dfields = struct.unpack('<IB', body[sbyte:ebyte])
@@ -313,14 +294,15 @@ class message():
             ebyte = length + 4
             print body[sbyte:length + 4]
 
-    def decrypt_first_header(self, deskey, iv, encrypted):
-        """Packet ID                            [ 16 bytes]
-           Triple-DES key                       [ 24 bytes]
-           Packet type identifier               [  1 byte ]
-           Packet information      [depends on packet type]
-           Timestamp                            [  7 bytes]
-           Message digest                       [ 16 bytes]
-           Random padding               [fill to 328 bytes]
+    def first_header(self, rawbytes):
+        """Unpack a received Mixmaster email message.
+
+           Public key ID                [  16 bytes]
+           Length of RSA-encrypted data [   1 byte ]
+           RSA-encrypted session key    [ 128 bytes]
+           Initialization vector        [   8 bytes]
+           Encrypted header part        [ 328 bytes]
+           Padding                      [  31 bytes]
 
         Regardless of the Packet Type, this function will always return a list
         of 5 elements.  Those being, ID, 3DESkey, TypeID, Packet_info and
@@ -329,8 +311,28 @@ class message():
         The Packet_Info is a flexible list of elements depending on the
         TypeID.
         """
+        # Unpack the header components.  This includes the 328 Byte
+        # encrypted component.  We can ignore the 31 Bytes of padding, hence
+        # 481 Bytes instead of 512.
+        (keyid, datalen, sesskey, iv,
+         enc) = struct.unpack('@16sB128s8s328s', rawbytes)
+        # Use the session key to decrypt the 3DES Symmetric key
+        deskey = self.pkcs1.decrypt(sesskey, "Failed")
+        if len(deskey) != 24:
+            raise ValidationError("Session key returned incorrect length "
+                                  "3DES key")
+        # Process the 328 Bytes of encrypted header using our newly discovered
+        # 3DES key obtained from the pkcs1 decryption.
         desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-        decrypted = desobj.decrypt(encrypted)
+        decrypted = desobj.decrypt(enc)
+        """Packet ID                            [ 16 bytes]
+           Triple-DES key                       [ 24 bytes]
+           Packet type identifier               [  1 byte ]
+           Packet information      [depends on packet type]
+           Timestamp                            [  7 bytes]
+           Message digest                       [ 16 bytes]
+           Random padding               [fill to 328 bytes]
+        """
         if len(decrypted) != 328:
             raise ValidationError("Incorrect number of Bytes decrypted")
         header = list(struct.unpack("@16s24sB", decrypted[0:41]))
