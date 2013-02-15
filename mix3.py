@@ -148,9 +148,9 @@ class secret_key():
             sys.exit(1)
         return self.construct(decrypted_key)
 
+
 class message():
     def __init__(self):
-
         sk = secret_key()
         #seckey = sk.read_secring()
         #sk.pem_export(seckey, "keys.pem")
@@ -216,12 +216,10 @@ class message():
             raise ValidationError("Mixmaster message digest failed")
         # Pass the list of message parts on for further processing.
         try:
-            self.unpack(packet)
+            headers = self.first_header(packet[0:481])
         except ValidationError, msg:
             print msg
-
-    def unpack(self, packet):
-        headers = self.first_header(packet[0:481])
+        assert type(headers) == list
         if headers[2] == 0:
             self.intermediate_message(headers,
                                       packet[512:10240],
@@ -398,16 +396,6 @@ class message():
         if len(header) != 5:
             raise ValidationError("Incorrect number of decrypted headers")
         return header
-
-def randbytes(n):
-    b = ''.join(chr(random.randint(0,255)) for _ in range(n))
-    return b
-
-#h = header()
-#teststr = randbytes(512):q
-#print len(teststr)
-#result = h.unpack(teststr)
-#print result
 
 m = message()
 m.process_mailbox()
