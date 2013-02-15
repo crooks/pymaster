@@ -99,7 +99,7 @@ class secret_key():
         -----End Mix Key-----
         """
 
-        f = open("/home/crooks/tmp/secring.mix")
+        f = open("/home/crooks/pymaster-git/tmp/secring.mix")
         inkey = False
         for line in f:
             if line.startswith("-----Begin Mix Key-----"):
@@ -154,9 +154,10 @@ class message():
         sk = secret_key()
         #seckey = sk.read_secring()
         #sk.pem_export(seckey, "keys.pem")
-        seckey = sk.pem_import("keys.pem")
+        seckey = sk.pem_import("/opt/steve/pymaster-git/tmp/keys.pem")
         self.pkcs1 = PKCS1_v1_5.new(seckey)
-        self.inbox = mailbox.Maildir('~/tmp', factory=None, create=False)
+        self.inbox = mailbox.Maildir('/opt/steve/pymaster-git/tmp',
+                                     factory=None, create=False)
 
     def process_mailbox(self):
         # Iterate over each message in the inbox.  This loop effectively
