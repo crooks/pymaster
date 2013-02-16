@@ -24,15 +24,15 @@ import email
 import smtplib
 import sys
 import os.path
+from Config import config
 
-def sendmail(filename, server="localhost"):
+def sendmail(filename):
     assert type(filename) == str
-    assert type(server) == str
-    smtp = smtplib.SMTP(server)
+    smtp = smtplib.SMTP(config.get('mail', 'server'))
     if os.path.isfile(filename):
         f = open(filename, 'r')
         msg = email.message_from_string(f.read())
-        msg["From"] = "noreply@mixmin.net"
+        msg["From"] = config.get('mail', 'outbound_address')
         msg['Date'] = email.utils.formatdate()
         smtp.sendmail(msg["From"], msg["To"], msg.as_string())
 
