@@ -35,6 +35,20 @@ class ValidationError(Exception):
     pass
 
 class secret_key():
+    def test(self):
+        """ This test demonstrates why Mixmaster cannot use bigger RSA keys.
+        If the key size is increased from 1024 to 2048 Bytes, the 24 Byte
+        session key, when encrypted, would increase from 128 to 256 Bytes.
+        The encrypted session key is contained within the plain-text component
+        of each 512 message header and only has 128 Bytes allocated to it.
+        """
+
+        deskey = Crypto.Random.get_random_bytes(24)
+        pkcs1_key = self.generate(keysize=2048)
+        pkcs1 = PKCS1_v1_5.new(pkcs1_key)
+        sesskey = pkcs1.encrypt(deskey)
+        print len(sesskey)
+
     def big_endian(self, byte_array):
         """Convert a Big-Endian Byte-Array to a long int."""
         x = long(0)
@@ -61,13 +75,12 @@ class secret_key():
         pem = f.read()
         return RSA.importKey(pem)
 
-    def generate(self):
-        k = RSA.generate(1024)
+    def generate(self, keysize=1024):
+        k = RSA.generate(keysize)
         public = k.publickey()
         secpem = k.exportKey(format='PEM')
         pubpem = public.exportKey(format='PEM')
-        print secpem
-        print pubpem
+        return k
 
     def construct(self, key):
         """Take a binary Mixmaster secret key and return an RSAobj
