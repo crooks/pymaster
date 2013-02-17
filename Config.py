@@ -73,16 +73,16 @@ def make_config():
 
     # We have to set basedir _after_ reading the config file because
     # other paths need to default to subpaths of it.
-    basedir = makepath(homedir, 'pymaster')
+    basedir = makepath(homedir, 'pymaster', 'basedir')
     # Keyring path.  Default: ~/pymaster/keyring
     config.add_section('keys')
-    keypath = makepath(basedir, 'keyring')
+    keypath = makepath(basedir, 'keyring', 'keyring')
     makeopt('keys', 'seckey', os.path.join(keypath, 'seckey.pem'))
     # Email options
     mailpath = makepath(basedir, 'Maildir', 'maildir')
-    makedir(os.path.join(mailpath, 'cur'))
-    makedir(os.path.join(mailpath, 'new'))
-    makedir(os.path.join(mailpath, 'tmp'))
+    mkdir(os.path.join(mailpath, 'cur'))
+    mkdir(os.path.join(mailpath, 'new'))
+    mkdir(os.path.join(mailpath, 'tmp'))
 
     if WRITE_DEFAULT_CONFIG:
         with open('config.sample', 'wb') as configfile:

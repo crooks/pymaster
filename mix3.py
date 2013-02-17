@@ -70,7 +70,7 @@ class secret_key():
 
     def pem_import(self, fn):
         if not os.path.isfile(fn):
-            print "PEM Import: %s file not found"
+            print "PEM Import: %s file not found" % fn
             sys.exit(1)
         f = open(fn, 'r')
         pem = f.read()
