@@ -24,12 +24,13 @@ import struct
 import random
 import sys
 import os.path
-import timing
 import mailbox
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
 import Crypto.Random
+import timing
+from Config import config
 
 class ValidationError(Exception):
     pass
@@ -98,7 +99,7 @@ class secret_key():
             print "Invalid key structure (p < q)"
         return RSA.construct((n, e, d, p, q))
 
-    def read_secring(self):
+    def read_secring(self, secring):
         """Read a secring.mix file and return the decryted keys.  This
         function relies on construct() to create an RSAobj.
 
@@ -112,7 +113,7 @@ class secret_key():
         -----End Mix Key-----
         """
 
-        f = open("/home/crooks/pymaster-git/tmp/secring.mix")
+        f = open(secring)
         inkey = False
         for line in f:
             if line.startswith("-----Begin Mix Key-----"):
@@ -167,9 +168,9 @@ class message():
         sk = secret_key()
         #seckey = sk.read_secring()
         #sk.pem_export(seckey, "keys.pem")
-        seckey = sk.pem_import("/opt/steve/pymaster-git/tmp/keys.pem")
+        seckey = sk.pem_import(config.get('keys', 'seckey'))
         self.pkcs1 = PKCS1_v1_5.new(seckey)
-        self.inbox = mailbox.Maildir('/opt/steve/pymaster-git/tmp',
+        self.inbox = mailbox.Maildir(config.get('paths', 'maildir'),
                                      factory=None, create=False)
 
     def process_mailbox(self):

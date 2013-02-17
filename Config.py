@@ -31,9 +31,20 @@ def mkdir(directory):
         os.mkdir(directory, 0700)
         sys.stdout.write("Created directory %s\n" % directory)
 
+def makepath(basedir, subdir, val):
+    if config.has_option('paths', val ):
+        path = config.get('paths', val)
+    else:
+        path = os.path.join(basedir, subdir)
+        config.set('paths', subdir, path)
+    mkdir(path)
+    return path
+
+def makeopt(sect, opt, val):
+    if not config.has_option(sect, opt):
+        config.set(sect, opt, val)
+
 def make_config():
-    # Configure the Config Parser.
-    config = ConfigParser.RawConfigParser()
 
     # By default, all the paths are subdirectories of the homedir.
     homedir = os.path.expanduser('~')
@@ -56,18 +67,22 @@ def make_config():
     else:
         configfile = os.path.join(homedir, '.pymasterrc')
 
-    config.add_section("paths")
+    config.add_section('paths')
     if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
         config.read(configfile)
 
     # We have to set basedir _after_ reading the config file because
     # other paths need to default to subpaths of it.
-    if config.has_option('paths', 'basedir'):
-        basedir = config.get('paths', 'basedir')
-    else:
-        basedir = os.path.join(homedir, 'pymaster')
-        config.set('paths', 'basedir', basedir)
-    mkdir(config.get('paths', 'basedir'))
+    basedir = makepath(homedir, 'pymaster')
+    # Keyring path.  Default: ~/pymaster/keyring
+    config.add_section('keys')
+    keypath = makepath(basedir, 'keyring')
+    makeopt('keys', 'seckey', os.path.join(keypath, 'seckey.pem'))
+    # Email options
+    mailpath = makepath(basedir, 'Maildir', 'maildir')
+    makedir(os.path.join(mailpath, 'cur'))
+    makedir(os.path.join(mailpath, 'new'))
+    makedir(os.path.join(mailpath, 'tmp'))
 
     if WRITE_DEFAULT_CONFIG:
         with open('config.sample', 'wb') as configfile:
@@ -90,4 +105,7 @@ parser.add_option("--restart", dest="restart", action="store_true",
                       help="Restart the aam2mail daemon")
 
 (options, args) = parser.parse_args()
-config = make_config()
+
+# Configure the Config Parser.
+config = ConfigParser.RawConfigParser()
+make_config()
