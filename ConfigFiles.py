@@ -21,14 +21,18 @@
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import re
+import timing
 import os.path
 
 class FileParser():
     def __init__(self, fn):
         assert type(fn) is str
-        regex, text = file2regex(fn)
-        self.regex = regex
-        self.text = text
+        self.fn = fn
+        self._reload()
+
+    def _reload(self):
+        self.regex, self.text = file2regex(self.fn)
+        self.reload_time = timing.future(hours=1)
 
     def validate(self, candidates, allhits=True):
         """If allhits is True, validate that all the candidates in a given list
@@ -37,6 +41,9 @@ class FileParser():
         """
 
         assert type(candidates) is list
+        # Check if it's time to reload the config file.
+        if timing.now() > self.reload_time:
+            self._reload()
         # Returns True when all candidates match a condition.
         allhit = False
         # Returns True if any candidate matchs a condition.
