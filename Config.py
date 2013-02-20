@@ -83,6 +83,10 @@ def make_config():
     mkdir(os.path.join(mailpath, 'cur'))
     mkdir(os.path.join(mailpath, 'new'))
     mkdir(os.path.join(mailpath, 'tmp'))
+    config.add_section('etc')
+    etcpath = makepath(basedir, 'etc', 'etc')
+    makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
+    makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
 
     if WRITE_DEFAULT_CONFIG:
         with open('config.sample', 'wb') as configfile:
