@@ -51,9 +51,9 @@ def make_config():
 
     config.add_section('general')
     config.set('general', 'loglevel', 'info')
+    config.set('general', 'middleman', 0)
 
     config.add_section('mail')
-    config.set('mail', 'maildir', os.path.join(homedir, 'Maildir'))
     config.set('mail', 'server', 'localhost')
     config.set('mail', 'domain', 'here.invalid')
     config.set('mail', 'outbound_address', 'noreply@here.invalid')

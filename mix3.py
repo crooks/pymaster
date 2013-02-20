@@ -233,10 +233,7 @@ class message():
         if digest != MD5.new(data=packet).digest():
             raise ValidationError("Mixmaster message digest failed")
         # Pass the list of message parts on for further processing.
-        try:
-            headers = self.first_header(packet[0:481])
-        except ValidationError, msg:
-            print msg
+        headers = self.first_header(packet[0:481])
         assert type(headers) == list
         if headers[2] == 0:
             self.intermediate_message(headers,
@@ -299,22 +296,36 @@ class message():
         sbyte = ebyte
         ebyte = sbyte + 1
         if destlist[0].startswith("null:"):
-            print "Dummy Message"
+            #print "Dummy Message"
+            pass
         else:
-            for d in destlist:
-                print "Destination: %s" % d.rstrip("\x00")
             hfields = struct.unpack('B', body[sbyte])[0]
             heads = "80s" * hfields
             sbyte = ebyte
             ebyte = sbyte + 80 * hfields
             headlist = struct.unpack(heads, body[sbyte:ebyte])
-            for h in headlist:
-                print "Header: %s" % d.rstrip("\x00")
             sbyte = ebyte
             # The length of the message is prepended by the 4 Byte length,
             # hence why we need to add 4 to ebyte.
             ebyte = length + 4
-            print body[sbyte:length + 4]
+            #print body[sbyte:length + 4]
+            print "Begin Message"
+            for d in destlist:
+                print "Destination: %s" % d.rstrip("\x00")
+            for h in headlist:
+                print "Header: %s" % d.rstrip("\x00")
+            print "End Message"
+            blk = self.blk.validate(destlist)
+            alw = self.alw.validate(destlist)
+            if config.get('general', 'middleman'):
+                if not alw or (alw and blk):
+                    print "%s/%s: Middleman Blocked Dest" % (alw, blk)
+                    raise ValidationError("Dest Blocked, need to remix")
+            else:
+                if blk and not alw:
+                    print "%s/%s: Blocked and not Allowed" % (alw, blk)
+                    raise ValidationError("Dest Blocked, need to remix")
+
 
     def first_header(self, first_header_bytes):
         """Unpack a received Mixmaster email message.
@@ -341,6 +352,12 @@ class message():
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
         if len(deskey) != 24:
+            print "KeyID: %s" % keyid.encode("hex")
+            print "Data Length: %s" % int(datalen)
+            print "Session Key: %s" % sesskey.encode("hex")
+            print "IV: %s" % iv.encode("hex")
+            print "3DES Key=%s, Length=%s" % (deskey.encode("hex"),
+                                              len(deskey))
             raise ValidationError("Session key returned incorrect length "
                                   "3DES key")
         # Process the 328 Bytes of encrypted header using our newly discovered
@@ -376,7 +393,7 @@ class message():
             # Checksum includes everything up to the Message Digest.
             # Don't forget this needs to include the 7 Byte Timestamp!
             checksum = MD5.new(data=decrypted[0:280]).digest()
-            print "Next Hop: %s" % addy
+            #print "Next Hop: %s" % addy
         elif header[2] == 1:
             """Packet type 1 (final hop):
                Message ID                     [ 16 bytes]

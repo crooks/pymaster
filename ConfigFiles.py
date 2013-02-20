@@ -40,7 +40,8 @@ class Parser():
         validate that *any* of the candidates match a condition.
         """
 
-        assert type(candidates) is list
+        # struct.unpack returns a tuple
+        assert type(candidates) is tuple
         # Check if it's time to reload the config file.
         if timing.now() > self.reload_time:
             self._reload()
@@ -50,9 +51,10 @@ class Parser():
         onehit = False
         hits = 0
         for c in candidates:
-            if self.regex and self.regex.search(c):
+            cc = c.rstrip('\x00')
+            if self.regex and self.regex.search(cc):
                 hits += 1
-            elif self.text and c in self.text:
+            elif self.text and cc in self.text:
                 hits += 1
         if allhits:
             return len(candidates) == hits
