@@ -24,7 +24,7 @@ import re
 import timing
 import os.path
 
-class FileParser():
+class Parser():
     def __init__(self, fn):
         assert type(fn) is str
         self.fn = fn
