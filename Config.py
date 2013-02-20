@@ -23,6 +23,8 @@ import ConfigParser
 from optparse import OptionParser
 import os
 import sys
+import timing
+import re
 
 WRITE_DEFAULT_CONFIG = False
 
@@ -97,6 +99,84 @@ class Config():
             with open('config.sample', 'wb') as configfile:
                 self.config.write(configfile)
 
+
+class Parser():
+    def __init__(self, fn):
+        assert type(fn) is str
+        self.fn = fn
+        self._reload()
+
+    def _reload(self):
+        self.regex, self.text = file2regex(self.fn)
+        self.reload_time = timing.future(hours=1)
+
+    def validate(self, candidates, allhits=True):
+        """If allhits is True, validate that all the candidates in a given list
+        match at least one of the conditions stated.  If allhists is False then
+        validate that *any* of the candidates match a condition.
+        """
+
+        # struct.unpack returns a tuple
+        assert type(candidates) is tuple
+        # Check if it's time to reload the config file.
+        if timing.now() > self.reload_time:
+            self._reload()
+        # Returns True when all candidates match a condition.
+        allhit = False
+        # Returns True if any candidate matchs a condition.
+        onehit = False
+        hits = 0
+        for c in candidates:
+            cc = c.rstrip('\x00')
+            if self.regex and self.regex.search(cc):
+                hits += 1
+            elif self.text and cc in self.text:
+                hits += 1
+        if allhits:
+            return len(candidates) == hits
+        else:
+            return hits > 0
+
+
+def file2regex(filename):
+    """Read a given file and return a list of items and, if regex formatted, a
+    compiled Regular Expression.
+
+    """
+    
+    reglines = []
+    listlines = []
+    for line in file2list(filename):
+        if line.startswith("/") and line.endswith("/"):
+            reglines.append(line[1:-1])
+        else:
+            listlines.append(line)
+    if len(reglines) == 0:
+        # No valid entires exist in the file.
+        print '%s: No valid entries found' % filename
+        compiled = False
+    else:
+        regex = '|'.join(reglines)
+        # This should never happen but best to check as || will match
+        # everything.
+        regex = regex.replace('||', '|')
+        compiled = re.compile(regex)
+    return compiled, listlines
+
+def file2list(filename):
+    if not os.path.isfile(filename):
+        print "%s: File not found" % filename
+        return []
+    valid = []
+    f = open(filename, 'r')
+    for line in f:
+        # Strip comments (including inline)
+        content = line.split('#', 1)[0].strip()
+        # Ignore empty lines
+        if len(content) > 0:
+            valid.append(content)
+    f.close()
+    return valid
 
 # OptParse comes first as ConfigParser depends on it to override the path to
 # the config file.

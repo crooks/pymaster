@@ -31,7 +31,6 @@ from Crypto.PublicKey import RSA
 import Crypto.Random
 import timing
 import Config
-import ConfigFiles
 
 class ValidationError(Exception):
     pass
@@ -173,8 +172,8 @@ class message():
         self.pkcs1 = PKCS1_v1_5.new(seckey)
         self.inbox = mailbox.Maildir(config.get('paths', 'maildir'),
                                      factory=None, create=False)
-        self.alw = ConfigFiles.Parser(config.get('etc', 'dest_alw'))
-        self.blk = ConfigFiles.Parser(config.get('etc', 'dest_blk'))
+        self.alw = Config.Parser(config.get('etc', 'dest_alw'))
+        self.blk = Config.Parser(config.get('etc', 'dest_blk'))
 
     def process_mailbox(self):
         # Iterate over each message in the inbox.  This loop effectively
