@@ -30,7 +30,7 @@ from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
 import Crypto.Random
 import timing
-from Config import config
+import Config
 import ConfigFiles
 
 class ValidationError(Exception):
@@ -432,5 +432,6 @@ class message():
             raise ValidationError("Incorrect number of decrypted headers")
         return header
 
+config = Config.Config().config
 m = message()
 m.process_mailbox()

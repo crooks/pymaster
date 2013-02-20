@@ -26,73 +26,76 @@ import sys
 
 WRITE_DEFAULT_CONFIG = False
 
-def mkdir(directory):
-    if not os.path.isdir(directory):
-        os.mkdir(directory, 0700)
-        sys.stdout.write("Created directory %s\n" % directory)
+class Config():
+    def __init__(self):
+        # Configure the Config Parser.
+        self.config = ConfigParser.RawConfigParser()
+        self.make_config()
 
-def makepath(basedir, subdir, val):
-    if config.has_option('paths', val ):
-        path = config.get('paths', val)
-    else:
-        path = os.path.join(basedir, subdir)
-        config.set('paths', subdir, path)
-    mkdir(path)
-    return path
+    def mkdir(self, directory):
+        if not os.path.isdir(directory):
+            os.mkdir(directory, 0700)
+            sys.stdout.write("Created directory %s\n" % directory)
 
-def makeopt(sect, opt, val):
-    if not config.has_option(sect, opt):
-        config.set(sect, opt, val)
+    def makepath(self, basedir, subdir, val):
+        if self.config.has_option('paths', val ):
+            path = self.config.get('paths', val)
+        else:
+            path = os.path.join(basedir, subdir)
+            self.config.set('paths', subdir, path)
+        self.mkdir(path)
+        return path
 
-def make_config():
+    def makeopt(self, sect, opt, val):
+        if not self.config.has_option(sect, opt):
+            self.config.set(sect, opt, val)
 
-    # By default, all the paths are subdirectories of the homedir.
-    homedir = os.path.expanduser('~')
+    def make_config(self):
+        # By default, all the paths are subdirectories of the homedir.
+        homedir = os.path.expanduser('~')
 
-    config.add_section('general')
-    config.set('general', 'loglevel', 'info')
-    config.set('general', 'middleman', 0)
+        self.config.add_section('general')
+        self.config.set('general', 'loglevel', 'info')
+        self.config.set('general', 'middleman', 0)
 
-    config.add_section('mail')
-    config.set('mail', 'server', 'localhost')
-    config.set('mail', 'domain', 'here.invalid')
-    config.set('mail', 'outbound_address', 'noreply@here.invalid')
+        self.config.add_section('mail')
+        self.config.set('mail', 'server', 'localhost')
+        self.config.set('mail', 'domain', 'here.invalid')
+        self.config.set('mail', 'outbound_address', 'noreply@here.invalid')
 
-    # Try and process the .aam2mailrc file.  If it doesn't exist, we bailout
-    # as some options are compulsory.
-    if options.rc:
-        configfile = options.rc
-    elif 'PYMASTER' in os.environ:
-        configfile = os.environ['PYMASTER']
-    else:
-        configfile = os.path.join(homedir, '.pymasterrc')
+        # Try and process the .aam2mailrc file.  If it doesn't exist, we bailout
+        # as some options are compulsory.
+        if options.rc:
+            configfile = options.rc
+        elif 'PYMASTER' in os.environ:
+            configfile = os.environ['PYMASTER']
+        else:
+            configfile = os.path.join(homedir, '.pymasterrc')
 
-    config.add_section('paths')
-    if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
-        config.read(configfile)
+        self.config.add_section('paths')
+        if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
+            self.config.read(configfile)
 
-    # We have to set basedir _after_ reading the config file because
-    # other paths need to default to subpaths of it.
-    basedir = makepath(homedir, 'pymaster', 'basedir')
-    # Keyring path.  Default: ~/pymaster/keyring
-    config.add_section('keys')
-    keypath = makepath(basedir, 'keyring', 'keyring')
-    makeopt('keys', 'seckey', os.path.join(keypath, 'seckey.pem'))
-    # Email options
-    mailpath = makepath(basedir, 'Maildir', 'maildir')
-    mkdir(os.path.join(mailpath, 'cur'))
-    mkdir(os.path.join(mailpath, 'new'))
-    mkdir(os.path.join(mailpath, 'tmp'))
-    config.add_section('etc')
-    etcpath = makepath(basedir, 'etc', 'etc')
-    makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
-    makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
+        # We have to set basedir _after_ reading the config file because
+        # other paths need to default to subpaths of it.
+        basedir = self.makepath(homedir, 'pymaster', 'basedir')
+        # Keyring path.  Default: ~/pymaster/keyring
+        self.config.add_section('keys')
+        keypath = self.makepath(basedir, 'keyring', 'keyring')
+        self.makeopt('keys', 'seckey', os.path.join(keypath, 'seckey.pem'))
+        # Email options
+        mailpath = self.makepath(basedir, 'Maildir', 'maildir')
+        self.mkdir(os.path.join(mailpath, 'cur'))
+        self.mkdir(os.path.join(mailpath, 'new'))
+        self.mkdir(os.path.join(mailpath, 'tmp'))
+        self.config.add_section('etc')
+        etcpath = self.makepath(basedir, 'etc', 'etc')
+        self.makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
+        self.makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
 
-    if WRITE_DEFAULT_CONFIG:
-        with open('config.sample', 'wb') as configfile:
-            config.write(configfile)
-
-    return config
+        if WRITE_DEFAULT_CONFIG:
+            with open('config.sample', 'wb') as configfile:
+                self.config.write(configfile)
 
 
 # OptParse comes first as ConfigParser depends on it to override the path to
@@ -110,6 +113,3 @@ parser.add_option("--restart", dest="restart", action="store_true",
 
 (options, args) = parser.parse_args()
 
-# Configure the Config Parser.
-config = ConfigParser.RawConfigParser()
-make_config()

@@ -24,7 +24,7 @@ import email
 import smtplib
 import sys
 import os.path
-from Config import config
+import config
 
 def sendmail(filename):
     assert type(filename) == str
@@ -36,4 +36,5 @@ def sendmail(filename):
         msg['Date'] = email.utils.formatdate()
         smtp.sendmail(msg["From"], msg["To"], msg.as_string())
 
+config = Config.Config().config
 sendmail("email.txt")
