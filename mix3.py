@@ -336,12 +336,6 @@ class message():
            Encrypted header part        [ 328 bytes]
            Padding                      [  31 bytes]
 
-        Regardless of the Packet Type, this function will always return a list
-        of 5 elements.  Those being, ID, 3DESkey, TypeID, Packet_info and
-        Timestamp.
-        The Message Digest is only used for validation within the function.
-        The Packet_Info is a flexible list of elements depending on the
-        TypeID.
         """
         # Unpack the header components.  This includes the 328 Byte
         # encrypted component.  We can ignore the 31 Bytes of padding, hence
@@ -370,9 +364,17 @@ class message():
            Timestamp                            [  7 bytes]
            Message digest                       [ 16 bytes]
            Random padding               [fill to 328 bytes]
+        
+        Regardless of the Packet Type, this function will always return a list
+        of 5 elements.  Those being, ID, 3DESkey, TypeID, Packet_info and
+        Timestamp.
+        The Message Digest is only used for validation within the function.
+        The Packet_Info is a flexible list of elements depending on the
+        TypeID.
         """
         if len(decrypted) != 328:
             raise ValidationError("Incorrect number of Bytes decrypted")
+        # header becomes a list consisting of ID, 3DESKey and TypeID
         header = list(struct.unpack("@16s24sB", decrypted[0:41]))
         if header[2] == 0:
             """Packet type 0 (intermediate hop):
