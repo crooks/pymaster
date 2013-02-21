@@ -26,6 +26,7 @@ import sys
 import os.path
 import config
 
+
 def sendmail(filename):
     assert type(filename) == str
     smtp = smtplib.SMTP(config.get('mail', 'server'))

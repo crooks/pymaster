@@ -28,6 +28,7 @@ import re
 
 WRITE_DEFAULT_CONFIG = False
 
+
 class Config():
     def __init__(self):
         # Configure the Config Parser.
@@ -40,7 +41,7 @@ class Config():
             sys.stdout.write("Created directory %s\n" % directory)
 
     def makepath(self, basedir, subdir, val):
-        if self.config.has_option('paths', val ):
+        if self.config.has_option('paths', val):
             path = self.config.get('paths', val)
         else:
             path = os.path.join(basedir, subdir)
@@ -65,8 +66,8 @@ class Config():
         self.config.set('mail', 'domain', 'here.invalid')
         self.config.set('mail', 'outbound_address', 'noreply@here.invalid')
 
-        # Try and process the .aam2mailrc file.  If it doesn't exist, we bailout
-        # as some options are compulsory.
+        # Try and process the .aam2mailrc file.  If it doesn't exist, we
+        # bailout as some options are compulsory.
         if options.rc:
             configfile = options.rc
         elif 'PYMASTER' in os.environ:
@@ -143,7 +144,7 @@ def file2regex(filename):
     compiled Regular Expression.
 
     """
-    
+
     reglines = []
     listlines = []
     for line in file2list(filename):
@@ -162,6 +163,7 @@ def file2regex(filename):
         regex = regex.replace('||', '|')
         compiled = re.compile(regex)
     return compiled, listlines
+
 
 def file2list(filename):
     if not os.path.isfile(filename):
@@ -192,4 +194,3 @@ parser.add_option("--restart", dest="restart", action="store_true",
                       help="Restart the aam2mail daemon")
 
 (options, args) = parser.parse_args()
-

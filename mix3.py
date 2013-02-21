@@ -76,9 +76,9 @@ class message():
                     # This is the beginning of a Mixmaster message.  The
                     # following variables are reset once a message is
                     # identified as a candidate.
-                    mixmes = True # True when inside a Mixmaster payload
-                    line_index = 0 # Packet line counter
-                    packet = "" # Packet payload (in Base64)
+                    mixmes = True  # True when inside a Mixmaster payload
+                    line_index = 0  # Packet line counter
+                    packet = ""  # Packet payload (in Base64)
                     continue
             if mixmes:
                 line_index += 1
@@ -160,7 +160,7 @@ class message():
         body = desobj.decrypt(encbody)
         sbyte = 0
         ebyte = 5
-        length,dfields = struct.unpack('<IB', body[sbyte:ebyte])
+        length, dfields = struct.unpack('<IB', body[sbyte:ebyte])
         dests = "80s" * dfields
         sbyte = ebyte
         ebyte = sbyte + (80 * dfields)
@@ -197,7 +197,6 @@ class message():
                 if blk and not alw:
                     print "%s/%s: Blocked and not Allowed" % (alw, blk)
                     raise ValidationError("Dest Blocked, need to remix")
-
 
     def first_header(self, first_header_bytes):
         """Unpack a received Mixmaster email message.
@@ -237,7 +236,7 @@ class message():
            Timestamp                            [  7 bytes]
            Message digest                       [ 16 bytes]
            Random padding               [fill to 328 bytes]
-        
+
         Regardless of the Packet Type, this function will always return a list
         of 5 elements.  Those being, ID, 3DESkey, TypeID, Packet_info and
         Timestamp.
