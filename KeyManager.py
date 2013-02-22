@@ -25,6 +25,7 @@ import sys
 import os.path
 import Crypto.Random
 from Crypto.PublicKey import RSA
+from Crypto.Hash import MD5
 import timing
 
 
@@ -161,3 +162,89 @@ class secret_key():
                    "match keyid.")
             sys.exit(1)
         return self.construct(decrypted_key)
+
+class Keyring():
+    def __init__(self):
+        self.pubring = "pubring.mix"
+        self.mlist2 = "mlist2.txt"
+
+    def pubkey_import(self):
+        f = open(self.pubring, 'r')
+        # Bool to indicate when an actual key is being read.  Set True by
+        # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
+        inkey = False
+        # The header always preceeds the key.  The following loop doesn't
+        # consider key content until a valid header has been processed.  The
+        # bool is reset by the "End Mix Key" cutmarks.
+        gothead = False
+        for line in f:
+            if not inkey and not gothead:
+                header = line.rstrip().split(" ")
+                if len(header) == 5 or len(header) == 7:
+                    # Pubring headers contain the following elements:-
+                    # header[0] Remailer Shortname
+                    # header[1] Remailer Email Address
+                    # header[2] Key ID
+                    # header[3] Mixmaster Version
+                    # header[4] Capstring
+                    #
+                    # Mixmaster > v3.0 also contain the following:-
+                    # header[5] Valid From Date
+                    # header[6] Expire Date
+                    gothead = True
+            elif (gothead and not inkey and
+                  line.startswith("-----Begin Mix Key-----")):
+                inkey = True
+                line_count = 0
+                b64key = ""
+            elif (gothead and inkey and
+                  line.startswith("-----End Mix Key-----")):
+                inkey = False
+                gothead = False
+                key = b64key.decode("base64")
+                if self._import_validate(keylen, keyid, header[2], key):
+                    print "Valid"
+                else:
+                    print "%s: Invalid key" % header[0]
+            elif gothead and inkey:
+                line_count += 1
+                if line_count == 1:
+                    keyid = line.rstrip()
+                elif line_count == 2:
+                    keylen = int(line.rstrip())
+                else:
+                    b64key += line
+            elif len(line.rstrip()) == 0:
+                # We can safely ignore blank lines if none of the above
+                # conditions apply.
+                pass
+            else:
+                print "Unexpected line: %s" % line.rstrip()
+        f.close()
+
+    def _import_validate(self, keylen, keyid, headid, key):
+        valid_length = len(key) == keylen
+        valid_keyid = keyid == MD5.new(data=key[2:258]).hexdigest() == headid
+        return valid_length and valid_keyid
+
+    def mlist2_import(self):
+        f = open(self.mlist2, 'r')
+        instats = False
+        for line in f:
+            if line.startswith("Generated: "):
+                generated = line.split(": ", 1)[1].rstrip()
+            elif line.startswith("----------"):
+                instats = True
+            elif instats and len(line.rstrip()) == 0:
+                instats = False
+            elif instats:
+                name = line[0:13].rstrip()
+                latent = line[27:32].lstrip()
+                uptime = line[49:54].lstrip()
+                opts = line[57:72]
+                print name, latent, uptime, opts
+        f.close()
+
+k = Keyring()
+#k.pubkey_import()
+k.mlist2_import()
