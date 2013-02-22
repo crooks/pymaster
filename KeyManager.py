@@ -76,7 +76,7 @@ class secret_key():
         pubpem = public.exportKey(format='PEM')
         return k
 
-    def construct(self, key):
+    def sec_construct(self, key):
         """Take a binary Mixmaster secret key and return an RSAobj
         """
         l = struct.unpack("<H", key[0:2])[0]
@@ -90,7 +90,13 @@ class secret_key():
             sys.exit(1)
         if p < q:
             print "Invalid key structure (p < q)"
-        return RSA.construct((n, e, d, p, q))
+        return RSA.construct(n, e, d, p, q)
+
+    def pub_construct(self, key):
+        l = struct.unpack("<H", key[0:2])[0]
+        n = self.big_endian(struct.unpack('>128B', key[2:130]))
+        e = self.big_endian(struct.unpack('>128B', key[130:258]))
+        return RSA.construct(n, e)
 
     def read_secring(self, secring):
         """Read a secring.mix file and return the decryted keys.  This
