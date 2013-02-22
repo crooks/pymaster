@@ -180,18 +180,21 @@ class Keyring():
         for line in f:
             if not inkey and not gothead:
                 header = line.rstrip().split(" ")
-                if len(header) == 5 or len(header) == 7:
+                if len(header) == 5:
                     # Pubring headers contain the following elements:-
                     # header[0] Remailer Shortname
                     # header[1] Remailer Email Address
                     # header[2] Key ID
                     # header[3] Mixmaster Version
                     # header[4] Capstring
-                    #
+                    gothead = True
+                elif len(header) == 7:
                     # Mixmaster > v3.0 also contain the following:-
                     # header[5] Valid From Date
                     # header[6] Expire Date
-                    gothead = True
+                    if (timing.dateobj(header[5]) <= timing.now() and
+                        timing.now() <= timing.dateobj(header[6])):
+                        gothead = True
             elif (gothead and not inkey and
                   line.startswith("-----Begin Mix Key-----")):
                 inkey = True
@@ -202,10 +205,11 @@ class Keyring():
                 inkey = False
                 gothead = False
                 key = b64key.decode("base64")
-                if self._import_validate(keylen, keyid, header[2], key):
-                    print "Valid"
-                else:
-                    print "%s: Invalid key" % header[0]
+                if (len(key) == keylen and
+                    keyid == MD5.new(data=key[2:258]).hexdigest() and
+                    keyid == header[2]):
+                    #TODO We want this key please!
+                    print keyid
             elif gothead and inkey:
                 line_count += 1
                 if line_count == 1:
@@ -222,14 +226,19 @@ class Keyring():
                 print "Unexpected line: %s" % line.rstrip()
         f.close()
 
-    def _import_validate(self, keylen, keyid, headid, key):
-        valid_length = len(key) == keylen
-        valid_keyid = keyid == MD5.new(data=key[2:258]).hexdigest() == headid
-        return valid_length and valid_keyid
-
     def mlist2_import(self):
+        """Returns a dictionary keyed by Remailer shortname, containing a list
+        of elements.  Those elements, in sequence are:-
+            Email Address
+            Latency (in Minutes)
+            Percentage Uptime
+            Options String
+            Capabilities String
+        """
+
         f = open(self.mlist2, 'r')
         instats = False
+        remdict = {}
         for line in f:
             if line.startswith("Generated: "):
                 generated = line.split(": ", 1)[1].rstrip()
@@ -239,12 +248,30 @@ class Keyring():
                 instats = False
             elif instats:
                 name = line[0:13].rstrip()
-                latent = line[27:32].lstrip()
-                uptime = line[49:54].lstrip()
+                try:
+                    lathrs = int(line[27:29].lstrip())
+                except ValueError:
+                    lathrs = 0
+                latmin = int(line[30:32])
+                latency = (lathrs * 60) + latmin
+                uptime = float(line[49:54].lstrip())
                 opts = line[57:72]
-                print name, latent, uptime, opts
+                remdict[name] = [latency, uptime, opts]
+            elif line.startswith("$remailer"):
+                name = line[11:].split('"} =')[0]
+                if name not in remdict:
+                    # This shouldn't happen, but if it does, just move on to
+                    # the next line.  The remailer will be removed later,
+                    # during length validation.
+                    continue
+                remdict[name].insert(0, line.split('> ')[0].split(' "<')[1])
+                remdict[name].append(line[:-3].split('> ')[1])
+                if len(remdict[name]) != 5:
+                    del remdict[name]
         f.close()
+        return remdict
 
 k = Keyring()
-#k.pubkey_import()
-k.mlist2_import()
+k.pubkey_import()
+d = k.mlist2_import()
+print d['banana']
