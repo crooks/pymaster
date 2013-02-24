@@ -38,7 +38,7 @@ class ValidationError(Exception):
 
 class message():
     def __init__(self):
-        sk = KeyManager.secret_key()
+        sk = KeyManager.SecretKey()
         #seckey = sk.read_secring()
         #sk.pem_export(seckey, "keys.pem")
         seckey = sk.pem_import(config.get('keys', 'seckey'))
@@ -214,6 +214,7 @@ class message():
         # 481 Bytes instead of 512.
         (keyid, datalen, sesskey, iv,
          enc) = struct.unpack('@16sB128s8s328s', first_header_bytes)
+        print "Length: %s" % datalen
         # Use the session key to decrypt the 3DES Symmetric key
         deskey = self.pkcs1.decrypt(sesskey, "Failed")
         if len(deskey) != 24:

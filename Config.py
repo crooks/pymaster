@@ -61,6 +61,14 @@ class Config():
         self.config.set('general', 'loglevel', 'info')
         self.config.set('general', 'middleman', 0)
 
+        self.config.add_section('chain')
+        self.config.set('chain', 'minlat', 20)
+        self.config.set('chain', 'maxlat', 120)
+        self.config.set('chain', 'minrel', 80)
+        self.config.set('chain', 'relfinal', 95)
+        self.config.set('chain', 'distance', 2)
+        self.config.set('chain', 'default', '*,*,*')
+
         self.config.add_section('mail')
         self.config.set('mail', 'server', 'localhost')
         self.config.set('mail', 'domain', 'here.invalid')

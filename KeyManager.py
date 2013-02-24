@@ -27,9 +27,10 @@ import Crypto.Random
 from Crypto.PublicKey import RSA
 from Crypto.Hash import MD5
 import timing
+import Config
 
 
-class secret_key():
+class SecretKey():
     def test(self):
         """ This test demonstrates why Mixmaster cannot use bigger RSA keys.
         If the key size is increased from 1024 to 2048 Bytes, the 24 Byte
@@ -163,54 +164,70 @@ class secret_key():
             sys.exit(1)
         return self.construct(decrypted_key)
 
+
 class Keyring():
     def __init__(self):
         self.pubring = "pubring.mix"
         self.mlist2 = "mlist2.txt"
 
-    def pubkey_import(self):
+    def _striplist(self, l):
+        """Take a list and return the same list with whitespace stripped from
+        each element.
+        """
+        assert type(l) is list
+        return ([x.strip() for x in l])
+
+    def _randint(self, n):
+        """Return a random Integer (0-255)
+        """
+        return int(Crypto.Random.random.randint(0, n))
+
+    def pubkey(self, remname):
+        """For a given remailer shortname, try and find an email address and a
+        valid key.  If no valid key is found, return None instead of the key.
+        """
         f = open(self.pubring, 'r')
         # Bool to indicate when an actual key is being read.  Set True by
         # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
         inkey = False
-        # The header always preceeds the key.  The following loop doesn't
-        # consider key content until a valid header has been processed.  The
-        # bool is reset by the "End Mix Key" cutmarks.
-        gothead = False
+        # This remains False until we get a valid header, then it is populated
+        # with the remailer's email address.
+        email = False
+        # The variable 'gotkey' is set True once a key has been located and
+        # validated.
+        gotkey = False
         for line in f:
-            if not inkey and not gothead:
+            # Worth checking for the space in the following condition to
+            # prevent 'foo' matching 'foobar'.
+            if line.startswith(remname + " "):
                 header = line.rstrip().split(" ")
-                if len(header) == 5:
-                    # Pubring headers contain the following elements:-
-                    # header[0] Remailer Shortname
-                    # header[1] Remailer Email Address
-                    # header[2] Key ID
-                    # header[3] Mixmaster Version
-                    # header[4] Capstring
-                    gothead = True
-                elif len(header) == 7:
-                    # Mixmaster > v3.0 also contain the following:-
+                if len(header) == 7:
+                    # Mixmaster > v3.0 enable validation of key date validity.
                     # header[5] Valid From Date
                     # header[6] Expire Date
-                    if (timing.dateobj(header[5]) <= timing.now() and
-                        timing.now() <= timing.dateobj(header[6])):
-                        gothead = True
-            elif (gothead and not inkey and
-                  line.startswith("-----Begin Mix Key-----")):
+                    if timing.dateobj(header[5]) > timing.now():
+                        # Key is not yet valid.
+                        continue
+                    if timing.dateobj(header[6]) < timing.now():
+                        # Key has expired.
+                        continue
+                email = header[1]
+                continue
+            if not email:
+                continue
+            if not inkey and line.startswith("-----Begin Mix Key-----"):
                 inkey = True
                 line_count = 0
                 b64key = ""
-            elif (gothead and inkey and
-                  line.startswith("-----End Mix Key-----")):
-                inkey = False
-                gothead = False
+            elif inkey and line.startswith("-----End Mix Key-----"):
                 key = b64key.decode("base64")
                 if (len(key) == keylen and
                     keyid == MD5.new(data=key[2:258]).hexdigest() and
                     keyid == header[2]):
-                    #TODO We want this key please!
-                    print keyid
-            elif gothead and inkey:
+                    # We want this key please!
+                    gotkey = True
+                    break
+            elif inkey:
                 line_count += 1
                 if line_count == 1:
                     keyid = line.rstrip()
@@ -225,53 +242,9 @@ class Keyring():
             else:
                 print "Unexpected line: %s" % line.rstrip()
         f.close()
-
-    def mlist2_import(self):
-        """Returns a dictionary keyed by Remailer shortname, containing a list
-        of elements.  Those elements, in sequence are:-
-            Email Address
-            Latency (in Minutes)
-            Percentage Uptime
-            Options String
-            Capabilities String
-        """
-
-        f = open(self.mlist2, 'r')
-        instats = False
-        remdict = {}
-        for line in f:
-            if line.startswith("Generated: "):
-                generated = line.split(": ", 1)[1].rstrip()
-            elif line.startswith("----------"):
-                instats = True
-            elif instats and len(line.rstrip()) == 0:
-                instats = False
-            elif instats:
-                name = line[0:13].rstrip()
-                try:
-                    lathrs = int(line[27:29].lstrip())
-                except ValueError:
-                    lathrs = 0
-                latmin = int(line[30:32])
-                latency = (lathrs * 60) + latmin
-                uptime = float(line[49:54].lstrip())
-                opts = line[57:72]
-                remdict[name] = [latency, uptime, opts]
-            elif line.startswith("$remailer"):
-                name = line[11:].split('"} =')[0]
-                if name not in remdict:
-                    # This shouldn't happen, but if it does, just move on to
-                    # the next line.  The remailer will be removed later,
-                    # during length validation.
-                    continue
-                remdict[name].insert(0, line.split('> ')[0].split(' "<')[1])
-                remdict[name].append(line[:-3].split('> ')[1])
-                if len(remdict[name]) != 5:
-                    del remdict[name]
-        f.close()
-        return remdict
+        if gotkey:
+            return email, key
+        return email, None
 
 k = Keyring()
-k.pubkey_import()
-d = k.mlist2_import()
-print d['banana']
+print k.pubkey("banana")

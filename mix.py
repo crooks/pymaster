@@ -106,7 +106,7 @@ class Body():
 
 class Header():
     def __init__(self):
-        sk = KeyManager.secret_key()
+        sk = KeyManager.SecretKey()
         #seckey = sk.read_secring()
         #sk.pem_export(seckey, "keys.pem")
         seckey = sk.pem_import(config.get('keys', 'seckey'))
@@ -224,6 +224,12 @@ class Header():
         assert len(test_data) == 328
         assert len(keyid) == 16
         header = keyid
+        deskey = des3_key()
+        # RSA Encrypt deskey and assert length = 128
+        iv = des3_iv()
+        enc = des3_encrypt(test_data, deskey, iv)
+        return header
+        
 
 
 def body_test():
@@ -243,4 +249,7 @@ def body_test():
         print h.rstrip("\x00")
     print body
 
-body_test()
+config = Config.Config().config
+#body_test()
+h = Header()
+print h.header_pack(0)
