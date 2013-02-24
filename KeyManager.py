@@ -165,17 +165,16 @@ class SecretKey():
         return self.construct(decrypted_key)
 
 
+class PubkeyError(Exception):
+    pass
+
+
 class Keyring():
     def __init__(self):
-        self.pubring = "pubring.mix"
-        self.mlist2 = "mlist2.txt"
-
-    def _striplist(self, l):
-        """Take a list and return the same list with whitespace stripped from
-        each element.
-        """
-        assert type(l) is list
-        return ([x.strip() for x in l])
+        pubring = config.get('keys', 'pubring')
+        if not os.path.isfile(pubring):
+            raise PubkeyError("%s: Pubring not found" % pubring)
+        self.pubring = pubring
 
     def _randint(self, n):
         """Return a random Integer (0-255)
@@ -240,11 +239,13 @@ class Keyring():
                 # conditions apply.
                 pass
             else:
-                print "Unexpected line: %s" % line.rstrip()
+                raise PubkeyError("Unexpected line in Pubring: %s" % line.rstrip())
         f.close()
-        if gotkey:
-            return email, key
-        return email, None
+        if not gotkey:
+            raise PubkeyError("%s: No Public Key found" % remname)
+        return email, key
 
-k = Keyring()
-print k.pubkey("banana")
+config = Config.Config().config
+if (__name__ == "__main__"):
+    k = Keyring()
+    print k.pubkey("banana")
