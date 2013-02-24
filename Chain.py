@@ -30,8 +30,10 @@ class ChainError(Exception):
 
 class Chain():
     def __init__(self):
-        self.pubring = "pubring.mix"
-        self.mlist2 = "mlist2.txt"
+        mlist2 = config.get('keys', 'mlist2')
+        if not os.path.isfile(mlist2):
+            raise ChainError("%s: Stats file not found" % mlist2)
+        self.mlist2 = mlist2
 
     def _striplist(self, l):
         """Take a list and return the same list with whitespace stripped from
@@ -80,6 +82,20 @@ class Chain():
         f.close()
         return remailers
 
+    def randexit(self):
+        """Select a random exit node.  This is used in Chain construction and
+        also, when Randhopping, to select the Randhop node.
+        """
+        exits = self.candidates(config.getint('chain', 'minlat'),
+                                config.getint('chain', 'maxlat'),
+                                config.getfloat('chain', 'relfinal'),
+                                exit=True)
+        exitnum = len(exits)
+        if exitnum == 0:
+            raise ChainError("No candidate Exit Remailers")
+        return exits[self._randint(exitnum - 1)]
+
+
     def chain(self, chainstr=None):
         if chainstr is None:
             # Use the configured default Chain
@@ -100,15 +116,7 @@ class Chain():
         # Assign an exit node.  We do this first in order to ensure all the
         # exits don't get gobbled up as Middles.
         if chainlist[-1] == "*":
-            # construct list of Exit candidates
-            exits = self.candidates(config.getint('chain', 'minlat'),
-                                    config.getint('chain', 'maxlat'),
-                                    config.getfloat('chain', 'relfinal'),
-                                    exit=True)
-            exitnum = len(exits)
-            if exitnum == 0:
-                raise ChainError("No candidate Exit Remailers")
-            chainlist[-1] = exits[self._randint(exitnum - 1)]
+            chainlist[-1] = self.randexit()
         if not "*" in chainlist:
             # We require no random Middleman Remailers so bail out before the
             # time consuming node selection process.
@@ -159,4 +167,4 @@ class Chain():
 
 config = Config.Config().config
 c = Chain()
-print c.chain("austria, *, *, *, banana")
+print c.chain("*, austria, *, *, *")
