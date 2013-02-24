@@ -24,6 +24,7 @@ import struct
 import sys
 import os.path
 import Crypto.Random
+import Crypto.Util.number
 from Crypto.PublicKey import RSA
 from Crypto.Hash import MD5
 import timing
@@ -44,6 +45,16 @@ class SecretKey():
         pkcs1 = PKCS1_v1_5.new(pkcs1_key)
         sesskey = pkcs1.encrypt(deskey)
         print len(sesskey)
+
+    def _wrap(self, s, n):
+        """Take a string and wrap it to lines of length n.
+        """
+        s = ''.join(s.split("\n"))
+        multiline = ""
+        while len(s) > 0:
+            multiline += s[:n] + "\n"
+            s = s[n:]
+        return multiline.rstrip()
 
     def big_endian(self, byte_array):
         """Convert a Big-Endian Byte-Array to a long int."""
@@ -95,11 +106,26 @@ class SecretKey():
         return RSA.construct(n, e, d, p, q)
 
     def pub_construct(self, key):
-        l = struct.unpack("<H", key[0:2])[0]
-        n = self.big_endian(struct.unpack('>128B', key[2:130]))
-        e = self.big_endian(struct.unpack('>128B', key[130:258]))
-        return RSA.construct(n, e)
+        length = struct.unpack("<H", key[0:2])[0]
+        pub = (Crypto.Util.number.bytes_to_long(key[2:130]),
+               Crypto.Util.number.bytes_to_long(key[130:258]))
+        rsaobj = RSA.construct(pub)
+        assert rsaobj.size() == length - 1
+        return rsaobj
 
+    def pub_deconstruct(self, keyobj):
+        # The key length is always 1024 bits
+        mix = struct.pack('<H', 1024)
+        assert len(mix) == 2
+        # n should always be 128 Bytes so don't try to pad it.  This
+        # would just trick the assertion.
+        mix += Crypto.Util.number.long_to_bytes(keyobj.n)
+        assert len(mix) == 2 + 128
+        mix += Crypto.Util.number.long_to_bytes(keyobj.e, blocksize=128)
+        assert len(mix) == 2 + 128 + 128
+        return self._wrap(mix.encode("base64"), 40)
+        
+        
     def read_secring(self, secring):
         """Read a secring.mix file and return the decryted keys.  This
         function relies on construct() to create an RSAobj.
@@ -200,6 +226,12 @@ class Keyring():
             # prevent 'foo' matching 'foobar'.
             if line.startswith(remname + " "):
                 header = line.rstrip().split(" ")
+                # Standard headers are:-
+                # header[0] Short Name
+                # header[1] Email Address
+                # header[2] KeyID
+                # header[3] Mixmaster Version
+                # header[4] Capstring
                 if len(header) == 7:
                     # Mixmaster > v3.0 enable validation of key date validity.
                     # header[5] Valid From Date
@@ -211,6 +243,7 @@ class Keyring():
                         # Key has expired.
                         continue
                 email = header[1]
+                keyid = header[2]
                 continue
             if not email:
                 continue
@@ -243,9 +276,16 @@ class Keyring():
         f.close()
         if not gotkey:
             raise PubkeyError("%s: No Public Key found" % remname)
-        return email, key
+        return email, keyid, key
 
 config = Config.Config().config
 if (__name__ == "__main__"):
+    s = SecretKey()
+    #keyobj = s.pem_import(config.get('keys', 'seckey'))
+    #s.mix_format(keyobj)
     k = Keyring()
-    print k.pubkey("banana")
+    email, keyid, key = k.pubkey("banana")
+    keyobj = s.pub_construct(key)
+    newkey = s.pub_deconstruct(keyobj)
+    keybin = newkey.decode("base64")
+    assert keyid == MD5.new(data=key[2:258]).hexdigest()
