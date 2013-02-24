@@ -94,6 +94,8 @@ class Config():
         self.config.add_section('keys')
         keypath = self.makepath(basedir, 'keyring', 'keyring')
         self.makeopt('keys', 'seckey', os.path.join(keypath, 'seckey.pem'))
+        self.makeopt('keys', 'pubring', os.path.join(keypath, 'pubring.mix'))
+        self.makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
         # Email options
         mailpath = self.makepath(basedir, 'Maildir', 'maildir')
         self.mkdir(os.path.join(mailpath, 'cur'))
