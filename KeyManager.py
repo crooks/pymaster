@@ -27,11 +27,44 @@ import Crypto.Random
 import Crypto.Util.number
 from Crypto.PublicKey import RSA
 from Crypto.Hash import MD5
+from Crypto.Cipher import DES3
 import timing
 import Config
 
 
-class SecretKey():
+class KeyUtils():
+    def wrap(self, s, n):
+        """Take a string and wrap it to lines of length n.
+        """
+        s = ''.join(s.split("\n"))
+        multiline = ""
+        while len(s) > 0:
+            multiline += s[:n] + "\n"
+            s = s[n:]
+        return multiline.rstrip()
+
+    def pem_export(self, keyobj, fn):
+        pem = keyobj.exportKey(format='PEM')
+        f = open(fn, 'w')
+        f.write(pem)
+        f.write("\n")
+        f.close()
+
+    def pem_import(self, fn):
+        if not os.path.isfile(fn):
+            raise Exception("%s: PEM import file not found" % fn)
+        f = open(fn, 'r')
+        pem = f.read()
+        f.close()
+        return RSA.importKey(pem)
+
+class SecretKey(KeyUtils):
+    def __init__(self):
+        secring = config.get('keys', 'secring')
+        if not os.path.isfile(secring):
+            raise Exception("%s: Secring file not found" % secring)
+        self.secring = secring
+
     def test(self):
         """ This test demonstrates why Mixmaster cannot use bigger RSA keys.
         If the key size is increased from 1024 to 2048 Bytes, the 24 Byte
@@ -46,42 +79,6 @@ class SecretKey():
         sesskey = pkcs1.encrypt(deskey)
         print len(sesskey)
 
-    def _wrap(self, s, n):
-        """Take a string and wrap it to lines of length n.
-        """
-        s = ''.join(s.split("\n"))
-        multiline = ""
-        while len(s) > 0:
-            multiline += s[:n] + "\n"
-            s = s[n:]
-        return multiline.rstrip()
-
-    def big_endian(self, byte_array):
-        """Convert a Big-Endian Byte-Array to a long int."""
-        x = long(0)
-        for b in byte_array:
-            x = (x << 8) + b
-        return x
-
-    def pem_export(self, keyobj, fn):
-        public = keyobj.publickey()
-        secpem = keyobj.exportKey(format='PEM')
-        pubpem = public.exportKey(format='PEM')
-        f = open(fn, 'w')
-        f.write(secpem)
-        f.write("\n\n")
-        f.write(pubpem)
-        f.write("\n")
-        f.close()
-
-    def pem_import(self, fn):
-        if not os.path.isfile(fn):
-            print "PEM Import: %s file not found" % fn
-            sys.exit(1)
-        f = open(fn, 'r')
-        pem = f.read()
-        return RSA.importKey(pem)
-
     def generate(self, keysize=1024):
         k = RSA.generate(keysize)
         public = k.publickey()
@@ -92,28 +89,19 @@ class SecretKey():
     def sec_construct(self, key):
         """Take a binary Mixmaster secret key and return an RSAobj
         """
-        l = struct.unpack("<H", key[0:2])[0]
-        n = self.big_endian(struct.unpack('>128B', key[2:130]))
-        e = self.big_endian(struct.unpack('>128B', key[130:258]))
-        d = self.big_endian(struct.unpack('>128B', key[258:386]))
-        p = self.big_endian(struct.unpack('>64B', key[386:450]))
-        q = self.big_endian(struct.unpack('>64B', key[450:514]))
-        if n - (p * q) != 0:
-            print "Invalid key structure (n - (p * q) != 0)"
-            sys.exit(1)
-        if p < q:
-            print "Invalid key structure (p < q)"
-        return RSA.construct(n, e, d, p, q)
-
-    def pub_construct(self, key):
         length = struct.unpack("<H", key[0:2])[0]
-        pub = (Crypto.Util.number.bytes_to_long(key[2:130]),
-               Crypto.Util.number.bytes_to_long(key[130:258]))
-        rsaobj = RSA.construct(pub)
+        n = Crypto.Util.number.bytes_to_long(key[2:130])
+        e = Crypto.Util.number.bytes_to_long(key[130:258])
+        d = Crypto.Util.number.bytes_to_long(key[258:386])
+        p = Crypto.Util.number.bytes_to_long(key[386:450])
+        q = Crypto.Util.number.bytes_to_long(key[450:514])
+        assert n - (p * q) == 0
+        assert p >= q
+        rsaobj = RSA.construct((n, e, d, p, q))
         assert rsaobj.size() == length - 1
         return rsaobj
 
-    def pub_deconstruct(self, keyobj):
+    def sec_deconstruct(self, keyobj):
         # The key length is always 1024 bits
         mix = struct.pack('<H', 1024)
         assert len(mix) == 2
@@ -123,10 +111,16 @@ class SecretKey():
         assert len(mix) == 2 + 128
         mix += Crypto.Util.number.long_to_bytes(keyobj.e, blocksize=128)
         assert len(mix) == 2 + 128 + 128
-        return self._wrap(mix.encode("base64"), 40)
+        mix += Crypto.Util.number.long_to_bytes(keyobj.d)
+        assert len(mix) == 2 + 128 + 128 + 128
+        mix += Crypto.Util.number.long_to_bytes(keyobj.p)
+        assert len(mix) == 2 + 128 + 128 + 128 + 64
+        mix += Crypto.Util.number.long_to_bytes(keyobj.q)
+        assert len(mix) == 2 + 128 + 128 + 128 + 64 + 64
+        return self.wrap(mix.encode("base64"), 40)
         
         
-    def read_secring(self, secring):
+    def read_secring(self):
         """Read a secring.mix file and return the decryted keys.  This
         function relies on construct() to create an RSAobj.
 
@@ -140,7 +134,7 @@ class SecretKey():
         -----End Mix Key-----
         """
 
-        f = open(secring)
+        f = open(self.secring)
         inkey = False
         for line in f:
             if line.startswith("-----Begin Mix Key-----"):
@@ -188,26 +182,41 @@ class SecretKey():
             print ("secring: Checksum failed.  Decrypted hash does not "
                    "match keyid.")
             sys.exit(1)
-        return self.construct(decrypted_key)
+        return keyid, decrypted_key
 
 
 class PubkeyError(Exception):
     pass
 
 
-class Keyring():
+class PublicKey(KeyUtils):
     def __init__(self):
         pubring = config.get('keys', 'pubring')
         if not os.path.isfile(pubring):
             raise PubkeyError("%s: Pubring not found" % pubring)
         self.pubring = pubring
 
-    def _randint(self, n):
-        """Return a random Integer (0-255)
-        """
-        return int(Crypto.Random.random.randint(0, n))
+    def pub_construct(self, key):
+        length = struct.unpack("<H", key[0:2])[0]
+        pub = (Crypto.Util.number.bytes_to_long(key[2:130]),
+               Crypto.Util.number.bytes_to_long(key[130:258]))
+        rsaobj = RSA.construct(pub)
+        assert rsaobj.size() == length - 1
+        return rsaobj
 
-    def pubkey(self, remname):
+    def pub_deconstruct(self, keyobj):
+        # The key length is always 1024 bits
+        mix = struct.pack('<H', 1024)
+        assert len(mix) == 2
+        # n should always be 128 Bytes so don't try to pad it.  This
+        # would just trick the assertion.
+        mix += Crypto.Util.number.long_to_bytes(keyobj.n)
+        assert len(mix) == 2 + 128
+        mix += Crypto.Util.number.long_to_bytes(keyobj.e, blocksize=128)
+        assert len(mix) == 2 + 128 + 128
+        return self.wrap(mix.encode("base64"), 40)
+        
+    def read_pubring(self, remname):
         """For a given remailer shortname, try and find an email address and a
         valid key.  If no valid key is found, return None instead of the key.
         """
@@ -281,11 +290,16 @@ class Keyring():
 config = Config.Config().config
 if (__name__ == "__main__"):
     s = SecretKey()
+    keyid, key = s.read_secring()
+    keyobj = s.sec_construct(key)
+    newkey = s.sec_deconstruct(keyobj)
+    assert keyid == MD5.new(data=key[2:258]).hexdigest()
+
     #keyobj = s.pem_import(config.get('keys', 'seckey'))
     #s.mix_format(keyobj)
-    k = Keyring()
-    email, keyid, key = k.pubkey("banana")
-    keyobj = s.pub_construct(key)
-    newkey = s.pub_deconstruct(keyobj)
+    p = PublicKey()
+    email, keyid, key = p.read_pubring("banana")
+    keyobj = p.pub_construct(key)
+    newkey = p.pub_deconstruct(keyobj)
     keybin = newkey.decode("base64")
     assert keyid == MD5.new(data=key[2:258]).hexdigest()
