@@ -43,6 +43,20 @@ class KeyUtils():
             s = s[n:]
         return multiline.rstrip()
 
+    def date_prevalid(self, created):
+        try:
+            return timing.dateobj(created) > timing.now()
+        except ValueError:
+            # If the date is corrupt, assume it's prevalid
+            return True
+
+    def date_expired(self, expires):
+        try:
+            return timing.dateobj(expires) < timing.now()
+        except ValueError:
+            # If the date is corrupt, assume it's expired
+            return True
+
     def pem_export(self, keyobj, fn):
         pem = keyobj.exportKey(format='PEM')
         f = open(fn, 'w')
@@ -64,7 +78,23 @@ class SecretKey(KeyUtils):
         if not os.path.isfile(secring):
             raise Exception("%s: Secring file not found" % secring)
         self.secring = secring
+        self.cache = {}
 
+    def __setitem__(self, keyid, keytup):
+        self.cache[keyid] = keytup
+
+    def __getitem__(self, keyid):
+        if not keyid in self.cache:
+            self.read_secring()
+            if not keyid in self.cache:
+                return None
+        key, expires = self.cache[keyid]
+        if self.date_expired(expires):
+            # Key has expired.  Delete it from the cache
+            del self.cache[keyid]
+            return None
+        return key
+        
     def test(self):
         """ This test demonstrates why Mixmaster cannot use bigger RSA keys.
         If the key size is increased from 1024 to 2048 Bytes, the 24 Byte
@@ -148,24 +178,32 @@ class SecretKey(KeyUtils):
             if inkey:
                 lcount += 1
                 if lcount == 1 and line.startswith("Created:"):
-                    created = timing.dateobj(line.split(": ")[1].rstrip())
+                    created = line.split(": ")[1].rstrip()
                 elif lcount == 2 and line.startswith("Expires:"):
-                    expires = timing.dateobj(line.split(": ")[1].rstrip())
+                    expires = line.split(": ")[1].rstrip()
+                    if (self.date_prevalid(created) or
+                        self.date_expired(expires)):
+                        # Ignore this key, it's not valid at this time.
+                        inkey = False
                 elif lcount == 3 and len(line) == 33:
                     keyid = line.rstrip()
                 elif lcount == 4:
+                    # Ignore the zero.  (Why's it there anyway!)
                     continue
                 elif lcount == 5:
                     iv = line.rstrip().decode("base64")
                 elif line.startswith("-----End Mix Key-----"):
                     inkey = False
-                    keybin = key.decode("base64")
+                    plainkey = self.decrypt(key.decode("base64"), iv)
+                    if keyid == MD5.new(data=plainkey[2:258]).hexdigest():
+                        keyobj = self.sec_construct(plainkey)
+                        self.cache[keyid] = (keyobj, expires)
+                    continue
                 else:
                     key += line
         f.close()
-        #TODO Because the remainder of this code is outside the loop, only
-        # the last key in the file is actually handled.
 
+    def decrypt(self, keybin, iv):
         # Hash a textual password and then use that hash, along with the
         # extracted IV, as the key for 3DES decryption.
         password = "Two Humped Dromadary"
@@ -176,13 +214,7 @@ class SecretKey(KeyUtils):
         if len(decrypted_key) != 712:
             print "secring: Decrypted key is incorrect length!"
             sys.exit(1)
-        # The 256 Byte keyid is generated from the key so we can validate
-        # it here.
-        if MD5.new(data=decrypted_key[2:258]).hexdigest() != keyid:
-            print ("secring: Checksum failed.  Decrypted hash does not "
-                   "match keyid.")
-            sys.exit(1)
-        return keyid, decrypted_key
+        return decrypted_key
 
 
 class PubkeyError(Exception):
@@ -195,6 +227,35 @@ class PublicKey(KeyUtils):
         if not os.path.isfile(pubring):
             raise PubkeyError("%s: Pubring not found" % pubring)
         self.pubring = pubring
+        self.cache = {}
+
+    def __setitem__(self, name, headtup):
+        self.cache[name] = headtup
+
+    def __getitem__(self, name):
+        # header[0] Email Address
+        # header[1] KeyID
+        # header[2] Mixmaster Version
+        # header[3] Capstring
+        # header[4] RSA Key Object
+        if not name in self.cache:
+            # If the requested Public Key isn't in the Cache, retry reading it
+            # from the pubring.mix file.
+            self.read_pubring()
+            if not name in self.cache:
+                # Give up now, the requested key doesn't exist in this
+                # Pubring.
+                return None
+        if len(self.cache[name]) == 7:
+            # This is a later style Mixmaster key so we can try to validate
+            # the dates on it.
+            if self.date_expired(self.cache[name][6]):
+                # Public Key has expired.
+                del self.cache[name]
+                return None
+        # Only return the first five elements.  Nothing cares about the dates
+        # after validation has happened.
+        return self.cache[name][0:5]
 
     def pub_construct(self, key):
         length = struct.unpack("<H", key[0:2])[0]
@@ -216,7 +277,7 @@ class PublicKey(KeyUtils):
         assert len(mix) == 2 + 128 + 128
         return self.wrap(mix.encode("base64"), 40)
         
-    def read_pubring(self, remname):
+    def read_pubring(self):
         """For a given remailer shortname, try and find an email address and a
         valid key.  If no valid key is found, return None instead of the key.
         """
@@ -226,14 +287,9 @@ class PublicKey(KeyUtils):
         inkey = False
         # This remains False until we get a valid header, then it is populated
         # with the remailer's email address.
-        email = False
-        # The variable 'gotkey' is set True once a key has been located and
-        # validated.
-        gotkey = False
+        gothead = False
         for line in f:
-            # Worth checking for the space in the following condition to
-            # prevent 'foo' matching 'foobar'.
-            if line.startswith(remname + " "):
+            if not gothead and not inkey:
                 header = line.rstrip().split(" ")
                 # Standard headers are:-
                 # header[0] Short Name
@@ -241,34 +297,34 @@ class PublicKey(KeyUtils):
                 # header[2] KeyID
                 # header[3] Mixmaster Version
                 # header[4] Capstring
-                if len(header) == 7:
+                if len(header) == 5:
+                    gothead = True
+                elif len(header) == 7:
                     # Mixmaster > v3.0 enable validation of key date validity.
                     # header[5] Valid From Date
                     # header[6] Expire Date
-                    if timing.dateobj(header[5]) > timing.now():
-                        # Key is not yet valid.
-                        continue
-                    if timing.dateobj(header[6]) < timing.now():
-                        # Key has expired.
-                        continue
-                email = header[1]
-                keyid = header[2]
-                continue
-            if not email:
-                continue
-            if not inkey and line.startswith("-----Begin Mix Key-----"):
+                    if (not self.date_prevalid(header[5]) and
+                        not self.date_expired(header[6])):
+                        # Key is within validity period
+                        gothead = True
+            elif (gothead and not inkey and
+                line.startswith("-----Begin Mix Key-----")):
                 inkey = True
                 line_count = 0
                 b64key = ""
-            elif inkey and line.startswith("-----End Mix Key-----"):
+            elif (gothead and inkey and
+                  line.startswith("-----End Mix Key-----")):
                 key = b64key.decode("base64")
                 if (len(key) == keylen and
                     keyid == MD5.new(data=key[2:258]).hexdigest() and
                     keyid == header[2]):
                     # We want this key please!
-                    gotkey = True
-                    break
-            elif inkey:
+                    name = header.pop(0)
+                    header.insert(4, self.pub_construct(key))
+                    self.cache[name] = tuple(header)
+                    gothead = False
+                    inkey = False
+            elif gothead and inkey:
                 line_count += 1
                 if line_count == 1:
                     keyid = line.rstrip()
@@ -283,23 +339,37 @@ class PublicKey(KeyUtils):
             else:
                 raise PubkeyError("Unexpected line in Pubring: %s" % line.rstrip())
         f.close()
-        if not gotkey:
-            raise PubkeyError("%s: No Public Key found" % remname)
-        return email, keyid, key
+
+
+class PubCache():
+    def __init__(self):
+        self.cache = {}
+
+    def __setitem__(self, name, headtup):
+        self.cache[name] = headtup
+
+    def __getitem__(self, name):
+        # header[0] Email Address
+        # header[1] KeyID
+        # header[2] Mixmaster Version
+        # header[3] Capstring
+        # header[4] RSA Key Object
+        if not name in self.cache:
+            return None
+        if len(self.cache[name]) == 7:
+            if timing.dateobj(self.cache[name][6]) < timing.now():
+                del self.cache[name]
+                return None
+        return self.cache[name][0:5]
+
 
 config = Config.Config().config
 if (__name__ == "__main__"):
-    s = SecretKey()
-    keyid, key = s.read_secring()
-    keyobj = s.sec_construct(key)
-    newkey = s.sec_deconstruct(keyobj)
-    assert keyid == MD5.new(data=key[2:258]).hexdigest()
-
-    #keyobj = s.pem_import(config.get('keys', 'seckey'))
-    #s.mix_format(keyobj)
     p = PublicKey()
-    email, keyid, key = p.read_pubring("banana")
-    keyobj = p.pub_construct(key)
-    newkey = p.pub_deconstruct(keyobj)
-    keybin = newkey.decode("base64")
-    assert keyid == MD5.new(data=key[2:258]).hexdigest()
+    p.read_pubring()
+    remailer = p['banana']
+    if remailer is not None:
+        print remailer[1]
+        s = SecretKey()
+        s.read_secring()
+        print s[remailer[1]]
