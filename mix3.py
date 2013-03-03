@@ -41,7 +41,7 @@ class message():
         sk = KeyManager.SecretKey()
         #seckey = sk.read_secring()
         #sk.pem_export(seckey, "keys.pem")
-        seckey = sk.pem_import(config.get('keys', 'seckey'))
+        seckey = sk.pem_import(config.get('keys', 'secring'))
         self.pkcs1 = PKCS1_v1_5.new(seckey)
         self.inbox = mailbox.Maildir(config.get('paths', 'maildir'),
                                      factory=None, create=False)

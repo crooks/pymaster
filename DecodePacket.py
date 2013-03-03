@@ -35,35 +35,8 @@ class ValidationError(Exception):
     pass
 
 
-def des3_iv():
-    return Crypto.Random.get_random_bytes(8)
-
-
-def des3_key():
-    return Crypto.Random.get_random_bytes(24)
-
-
-def des3_encrypt(data, deskey, iv):
-    assert len(deskey) == 24
-    assert len(iv) == 8
-    assert len(data) % 8 == 0
-    desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-    return desobj.encrypt(data)
-
-
-def des3_decrypt(data, deskey, iv):
-    assert len(deskey) == 24
-    assert len(iv) == 8
-    assert len(data) % 8 == 0
-    desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-    return desobj.decrypt(data)
-    
-
-def pad(length, data):
-    padding = length - len(data)
-    padded = data + Crypto.Random.get_random_bytes(padding)
-    assert len(padded) == length
-    return padded
+class DummyMessage(Exception):
+    pass
 
 
 class MixPayload():
@@ -73,7 +46,7 @@ class MixPayload():
                                   "3DES key")
         self.deskey = deskey
 
-    def set_inner_head(self, packet):
+    def encrypted_head(self, packet):
         """Packet ID                            [ 16 bytes]
            Triple-DES key                       [ 24 bytes]
            Packet type identifier               [  1 byte ]
@@ -96,6 +69,7 @@ class MixPayload():
          packet_type) = struct.unpack("@16s24sB", packet.decrypted[0:41])
         self.packet_id = packet_id
         self.set_deskey(deskey)
+        self.msgtype = packet_type
         if packet_type == 0:
             self.intermediate_message(packet)
         elif packet_type == 1:
@@ -106,7 +80,6 @@ class MixPayload():
             pass
         else:
             raise ValidationError("Unknown Packet type")
-
 
     def intermediate_message(self, packet):
         """Packet type 0 (intermediate hop):
@@ -188,8 +161,7 @@ class MixPayload():
         sbyte = ebyte
         ebyte = sbyte + 1
         if destlist[0].startswith("null:"):
-            print "Dummy Message"
-            return None, None, None
+            raise DummyMessage("Don't panic!")
         hfields = struct.unpack('B', body[sbyte])[0]
         head_struct = "80s" * hfields
         sbyte = ebyte
@@ -199,74 +171,54 @@ class MixPayload():
         # The length of the message is prepended by the 4 Byte length,
         # hence why we need to add 4 to ebyte.
         ebyte = length + 4
-        print self.unpad(destlist)
-        print self.unpad(headlist)
+        self.body = body[sbyte:ebyte]
+        self.dests = self.unpad(destlist)
+        self.heads = self.unpad(headlist)
 
     def unpad(self, padded):
         assert type(padded) == list
         for e in range(len(padded)):
             padded[e] = padded[e].rstrip("\x00")
         return padded
-                
-
-class DecodeHeader():
-    def __init__(self):
-        self.sk = KeyManager.SecretKey()
-
-    def unpack(self, packet):
-        """Unpack a received Mixmaster email message header.  The spec calls
-        for 512 Bytes, of which the last 31 are padding.
-
-           Public key ID                [  16 bytes]
-           Length of RSA-encrypted data [   1 byte ]
-           RSA-encrypted session key    [ 128 bytes]
-           Initialization vector        [   8 bytes]
-           Encrypted header part        [ 328 bytes]
-           Padding                      [  31 bytes]
-
-        """
-        # Unpack the header components.  This includes the 328 Byte
-        # encrypted component.  We can ignore the 31 Bytes of padding, hence
-        # 481 Bytes instead of 512.
-        mix = MixPayload()
-        (keyid, datalen, sesskey, iv,
-         enc) = struct.unpack('@16sB128s8s328s', packet.header[0:481])
-        if not len(sesskey) == datalen:
-            raise ValidationError("Incorrect session key size")
-        # Use the session key to decrypt the 3DES Symmetric key
-        seckey = self.sk[keyid.encode("hex")]
-        if seckey is None:
-            raise ValidationError("Secret Key not found")
-        pkcs1 = PKCS1_v1_5.new(seckey)
-        sess_deskey = pkcs1.decrypt(sesskey, "Failed")
-
-        # Process the 328 Bytes of encrypted header using our newly discovered
-        # 3DES key obtained from the pkcs1 decryption.
-        desobj = DES3.new(sess_deskey, DES3.MODE_CBC, IV=iv)
-        packet.decrypted = desobj.decrypt(enc)
-        mix.set_inner_head(packet)
-        # Unpack the 328 decrypted bytes into their component parts
-        return mix
 
 
-def body_test():
-    msg = "This is a test message"
-    dests = ["steve@mixmin.net"]
-    headers = ["steve@mixmin.net"]
-    b = Body()
-    body = b.body_pack(msg, dests, headers)
-    iv = des3_iv()
-    key = des3_key()
-    encrypted = des3_encrypt(body, key, iv)
-    decrypted = des3_decrypt(encrypted, key, iv)
-    destlist, headlist, body = b.body_unpack(decrypted)
-    for d in destlist:
-        print d.rstrip("\x00")
-    for h in headlist:
-        print h.rstrip("\x00")
-    print body
+def unpack(packet):
+    """Unpack a received Mixmaster email message header.  The spec calls
+    for 512 Bytes, of which the last 31 are padding.
+
+       Public key ID                [  16 bytes]
+       Length of RSA-encrypted data [   1 byte ]
+       RSA-encrypted session key    [ 128 bytes]
+       Initialization vector        [   8 bytes]
+       Encrypted header part        [ 328 bytes]
+       Padding                      [  31 bytes]
+
+    """
+    # Unpack the header components.  This includes the 328 Byte
+    # encrypted component.  We can ignore the 31 Bytes of padding, hence
+    # 481 Bytes instead of 512.
+    mix = MixPayload()
+    (keyid, datalen, sesskey, iv,
+     enc) = struct.unpack('@16sB128s8s328s', packet.header[0:481])
+    if not len(sesskey) == datalen:
+        raise ValidationError("Incorrect session key size")
+    # Use the session key to decrypt the 3DES Symmetric key
+    seckey = sk[keyid.encode("hex")]
+    if seckey is None:
+        raise ValidationError("Secret Key not found")
+    pkcs1 = PKCS1_v1_5.new(seckey)
+    sess_deskey = pkcs1.decrypt(sesskey, "Failed")
+
+    # Process the 328 Bytes of encrypted header using our newly discovered
+    # 3DES key obtained from the pkcs1 decryption.
+    desobj = DES3.new(sess_deskey, DES3.MODE_CBC, IV=iv)
+    packet.decrypted = desobj.decrypt(enc)
+    mix.encrypted_head(packet)
+    # Unpack the 328 decrypted bytes into their component parts
+    return mix
 
 
 config = Config.Config().config
+sk = KeyManager.SecretKey()
 if (__name__ == "__main__"):
     pass
