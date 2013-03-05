@@ -33,6 +33,11 @@ import Config
 
 
 class KeyUtils():
+    def ishex(self, s):
+        """Validate a string contains only Hex chars.
+        """
+        return not set(s.lower())-set('0123456789abcdef')
+
     def wrap(self, s, n):
         """Take a string and wrap it to lines of length n.
         """
@@ -72,18 +77,51 @@ class KeyUtils():
         f.close()
         return RSA.importKey(pem)
 
+    # Iterative Algorithm (xgcd)
+    def iterative_egcd(self, a, b):
+        x,y, u,v = 0,1, 1,0
+        while a != 0:
+            q,r = b//a,b%a; m,n = x-u*q,y-v*q # use x//y for floor "floor division"
+            b,a, x,y, u,v = a,r, u,v, m,n
+        return b, x, y
+     
+    # Recursive Algorithm
+    def recursive_egcd(self, a, b):
+        """Returns a triple (g, x, y), such that ax + by = g = gcd(a,b).
+           Assumes a, b >= 0, and that at least one of them is > 0.
+           Bounds on output values: |x|, |y| <= max(a, b)."""
+        if a == 0:
+            return (b, 0, 1)
+        else:
+            g, y, x = self.recursive_egcd(b % a, a)
+            return (g, x - (b // a) * y, y)
+     
+    def modinv(self, a, m):
+        g, x, y = self.iterative_egcd(a, m) 
+        if g != 1:
+            return None
+        else:
+            return x % m
+
+
 class SecretKey(KeyUtils):
     def __init__(self):
         secring = config.get('keys', 'secring')
         if not os.path.isfile(secring):
             raise Exception("%s: Secring file not found" % secring)
         self.secring = secring
-        self.cache = {}
+        self.read_secring()
+        if len(self.cache) == 0:
+            # We have no valid keys!  Better generate a new Secret/Public pair
+            # and write them to the approprite files.
+            self.newkeys(cacheit=True)
 
     def __setitem__(self, keyid, keytup):
         self.cache[keyid] = keytup
 
     def __getitem__(self, keyid):
+        if type(keyid) != str or len(keyid) != 32 or not self.ishex(keyid):
+            return None
         if not keyid in self.cache:
             self.read_secring()
             if not keyid in self.cache:
@@ -109,11 +147,58 @@ class SecretKey(KeyUtils):
         sesskey = pkcs1.encrypt(deskey)
         print len(sesskey)
 
+    def newkeys(self, cacheit=False):
+        """Generate a new Secret/Public key and write them to the configured
+        files.  In the case of the Secret Key, it's appended to Secring.  The
+        Public Key overwrites the existing file.
+        """
+
+        # Make a static datestamp
+        today = timing.today()
+        keyobj = RSA.generate(1024)
+        #public = RSA.public(keyobj)
+        secret, public = self.rsaobj2mix(keyobj)
+        keyid = MD5.new(data=public[2:258]).hexdigest()
+        if cacheit:
+            # cacheit was explicitly requested so we put the generated key
+            # into the key cache.
+            self.cache[keyid] = (keyobj, today)
+        #mixpub = self.rsaobj2mix(public)
+        iv = Crypto.Random.get_random_bytes(8)
+        pwhash = MD5.new(data=config.get('general', 'passphrase')).digest()
+        des = DES3.new(pwhash, DES3.MODE_CBC, IV=iv)
+        secenc = des.encrypt(secret)
+        f = open(config.get('keys', 'secring'), 'a')
+        f.write('-----Begin Mix Key-----\n')
+        f.write('Created: %s\n' % today)
+        f.write('Expires: %s\n' % timing.datestamp(timing.future(days=390)))
+        f.write('%s\n' % keyid)
+        f.write('0\n')
+        f.write('%s' % iv.encode('base64'))
+        f.write('%s\n' % self.wrap(secenc.encode("base64"), 40))
+        f.write('-----End Mix Key-----\n\n')
+        f.close()
+        f = open(config.get('keys', 'pubkey'), 'w')
+        f.write('%s ' % config.get('general', 'shortname'))
+        f.write('%s ' % config.get('mail', 'address'))
+        f.write('%s ' % keyid)
+        f.write('%s ' % config.get('general', 'version'))
+        if config.getboolean('general', 'middleman'):
+            conf = "MC"
+        else:
+            conf = "C"
+        f.write('%s\n\n' % conf)
+        f.write('-----Begin Mix Key-----\n')
+        f.write('%s\n' % keyid)
+        f.write('%s\n' % len(public))
+        f.write('%s\n' % self.wrap(public.encode("base64"), 40))
+        f.write('-----End Mix Key-----\n\n')
+        f.close()
+
+
     def generate(self, keysize=1024):
         k = RSA.generate(keysize)
         public = k.publickey()
-        secpem = k.exportKey(format='PEM')
-        pubpem = public.exportKey(format='PEM')
         return k
 
     def sec_construct(self, key):
@@ -131,24 +216,29 @@ class SecretKey(KeyUtils):
         assert rsaobj.size() == length - 1
         return rsaobj
 
-    def sec_deconstruct(self, keyobj):
-        # The key length is always 1024 bits
-        mix = struct.pack('<H', 1024)
-        assert len(mix) == 2
+    def rsaobj2mix(self, keyobj, secret=True):
+        # Calculate some RSA key components.
+        keyobj.dmp1 = self.modinv(keyobj.e, keyobj.p - 1)
+        keyobj.dmq1 = self.modinv(keyobj.e, keyobj.q - 1)
+        keyobj.iqmp = self.modinv(keyobj.q, keyobj.p)
         # n should always be 128 Bytes so don't try to pad it.  This
         # would just trick the assertion.
-        mix += Crypto.Util.number.long_to_bytes(keyobj.n)
-        assert len(mix) == 2 + 128
-        mix += Crypto.Util.number.long_to_bytes(keyobj.e, blocksize=128)
-        assert len(mix) == 2 + 128 + 128
-        mix += Crypto.Util.number.long_to_bytes(keyobj.d)
-        assert len(mix) == 2 + 128 + 128 + 128
-        mix += Crypto.Util.number.long_to_bytes(keyobj.p)
-        assert len(mix) == 2 + 128 + 128 + 128 + 64
-        mix += Crypto.Util.number.long_to_bytes(keyobj.q)
-        assert len(mix) == 2 + 128 + 128 + 128 + 64 + 64
-        return self.wrap(mix.encode("base64"), 40)
-        
+        secret = struct.pack('<H', 1024)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.n)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.e, blocksize=128)
+        # Now we have the modulus and the exponent, take a note of them for
+        # the Public Key.
+        public = secret
+        assert len(public) == 258
+        secret += Crypto.Util.number.long_to_bytes(keyobj.d)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.p)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.q)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.dmp1)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.dmq1)
+        secret += Crypto.Util.number.long_to_bytes(keyobj.iqmp)
+        assert len(secret) == 706
+        secret += "\x00" * (712 - len(secret))
+        return secret, public
         
     def read_secring(self):
         """Read a secring.mix file and return the decryted keys.  This
@@ -164,6 +254,10 @@ class SecretKey(KeyUtils):
         -----End Mix Key-----
         """
 
+        # The cache holds all the keys (as objects, keyed by keyid).  Every
+        # time the keyring is reread (by this function), the cache is
+        # recreated.
+        self.cache = {}
         f = open(self.secring)
         inkey = False
         for line in f:
@@ -175,32 +269,33 @@ class SecretKey(KeyUtils):
                 lcount = 0
                 inkey = True
                 continue
-            if inkey:
-                lcount += 1
-                if lcount == 1 and line.startswith("Created:"):
-                    created = line.split(": ")[1].rstrip()
-                elif lcount == 2 and line.startswith("Expires:"):
-                    expires = line.split(": ")[1].rstrip()
-                    if (self.date_prevalid(created) or
-                        self.date_expired(expires)):
-                        # Ignore this key, it's not valid at this time.
-                        inkey = False
-                elif lcount == 3 and len(line) == 33:
-                    keyid = line.rstrip()
-                elif lcount == 4:
-                    # Ignore the zero.  (Why's it there anyway!)
-                    continue
-                elif lcount == 5:
-                    iv = line.rstrip().decode("base64")
-                elif line.startswith("-----End Mix Key-----"):
+            if not inkey:
+                continue
+            lcount += 1
+            if lcount == 1 and line.startswith("Created:"):
+                created = line.split(": ")[1].rstrip()
+            elif lcount == 2 and line.startswith("Expires:"):
+                expires = line.split(": ")[1].rstrip()
+                if (self.date_prevalid(created) or
+                    self.date_expired(expires)):
+                    # Ignore this key, it's not valid at this time.
                     inkey = False
-                    plainkey = self.decrypt(key.decode("base64"), iv)
-                    if keyid == MD5.new(data=plainkey[2:258]).hexdigest():
-                        keyobj = self.sec_construct(plainkey)
-                        self.cache[keyid] = (keyobj, expires)
-                    continue
-                else:
-                    key += line
+            elif lcount == 3 and len(line) == 33:
+                keyid = line.rstrip()
+            elif lcount == 4:
+                # Ignore the zero.  (Why's it there anyway!)
+                continue
+            elif lcount == 5:
+                iv = line.rstrip().decode("base64")
+            elif line.startswith("-----End Mix Key-----"):
+                inkey = False
+                plainkey = self.decrypt(key.decode("base64"), iv)
+                if keyid == MD5.new(data=plainkey[2:258]).hexdigest():
+                    keyobj = self.sec_construct(plainkey)
+                    self.cache[keyid] = (keyobj, expires)
+                continue
+            else:
+                key += line
         f.close()
 
     def decrypt(self, keybin, iv):
@@ -212,7 +307,7 @@ class SecretKey(KeyUtils):
         decrypted_key = des.decrypt(keybin)
         # The decrypted key should always be 712 Bytes
         if len(decrypted_key) != 712:
-            print "secring: Decrypted key is incorrect length!"
+            print "%s: secring: Decrypted key is incorrect length!" % len(decrypted_key)
             sys.exit(1)
         return decrypted_key
 
@@ -369,7 +464,6 @@ if (__name__ == "__main__"):
     p.read_pubring()
     remailer = p['banana']
     if remailer is not None:
-        print remailer[1]
+        print remailer[0], remailer[1]
         s = SecretKey()
-        s.read_secring()
         print s[remailer[1]]

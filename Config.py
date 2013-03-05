@@ -58,8 +58,10 @@ class Config():
         homedir = os.path.expanduser('~')
 
         self.config.add_section('general')
+        self.config.set('general', 'shortname', 'pymaster')
         self.config.set('general', 'loglevel', 'info')
         self.config.set('general', 'middleman', 0)
+        self.config.set('general', 'passphrase', 'A badly configured server')
 
         self.config.add_section('chain')
         self.config.set('chain', 'minlat', 20)
@@ -72,6 +74,7 @@ class Config():
         self.config.add_section('mail')
         self.config.set('mail', 'server', 'localhost')
         self.config.set('mail', 'domain', 'here.invalid')
+        self.config.set('mail', 'address', 'pymaster@domain.invalid')
         self.config.set('mail', 'outbound_address', 'noreply@here.invalid')
 
         # Try and process the .aam2mailrc file.  If it doesn't exist, we
@@ -95,6 +98,7 @@ class Config():
         keypath = self.makepath(basedir, 'keyring', 'keyring')
         self.makeopt('keys', 'secring', os.path.join(keypath, 'secring.mix'))
         self.makeopt('keys', 'pubring', os.path.join(keypath, 'pubring.mix'))
+        self.makeopt('keys', 'pubkey', os.path.join(keypath, 'key.txt'))
         self.makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
         # Email options
         mailpath = self.makepath(basedir, 'Maildir', 'maildir')
@@ -105,10 +109,15 @@ class Config():
         etcpath = self.makepath(basedir, 'etc', 'etc')
         self.makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
         self.makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
+        libpath = self.makepath(basedir, 'lib', 'lib')
+        self.makeopt('general', 'idlog', os.path.join(libpath, 'idlog.db'))
 
         if WRITE_DEFAULT_CONFIG:
             with open('config.sample', 'wb') as configfile:
                 self.config.write(configfile)
+        # Setting this last prevents it being overridden in the config file.
+        # Hardly security but it doesn't really matter.
+        self.config.set('general', 'version', 'pymaster-0.1a')
 
 
 class Parser():

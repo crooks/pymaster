@@ -24,7 +24,6 @@ def future(days=0, hours=0, mins=0, secs=0):
     return now() + datetime.timedelta(days=days, hours=hours,
                                       minutes=mins, seconds=secs)
 
-
 def timestamp(stamp):
     return stamp.strftime("%Y-%m-%d %H:%M:%S")
 
