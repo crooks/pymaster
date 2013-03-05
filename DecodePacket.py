@@ -23,6 +23,7 @@
 import struct
 import sys
 import os.path
+import shelve
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
@@ -71,7 +72,7 @@ class MixPayload():
         self.set_deskey(deskey)
         self.msgtype = packet_type
         if packet_type == 0:
-            self.intermediate_message(packet)
+            self.intermediate_message(packet, deskey)
         elif packet_type == 1:
             iv, msgid = self.exit_message(packet)
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
@@ -81,25 +82,59 @@ class MixPayload():
         else:
             raise ValidationError("Unknown Packet type")
 
-    def intermediate_message(self, packet):
+    def intermediate_message(self, packet, deskey):
         """Packet type 0 (intermediate hop):
            19 Initialization vectors      [152 bytes]
            Remailer address               [ 80 bytes]
         """
+        # The following unpack handles elements outside the scope of the
+        # intermediate packet.  This is because the intermediate components
+        # vary in length, depending on message type.
         (nineteen_ivs, addy, timestamp,
          msgdigest) = struct.unpack('@152s80s7s16s', packet.decrypted[41:296])
-        # Put the IVs into individual list items, starting at header[3]
-        packet_info = []
-        for i in range(19):
-            sbyte = i * 8
-            packet_info.append(nineteen_ivs[sbyte:sbyte + 8])
-        packet_info.append(addy)
         # Checksum includes everything up to the Message Digest.
         # Don't forget this needs to include the 7 Byte Timestamp!
         checksum = MD5.new(data=packet.decrypted[0:280]).digest()
         if checksum != msgdigest:
             raise ValidationError("Encrypted header failed checksum")
-        #print "Intermediate Message: Next Hop: %s" % addy
+        # The payload string will be extended as each header has a layer of
+        # encryption striped off.  Finally, the decrypted body is also added.
+        payload = ""
+        # Loop through two components of the message, in parallel. The IVs are
+        # extracted from the encrypted packet and the corresponding encrypted
+        # header has a layer of 3DES removed.
+        for h in range(19):
+            iv_sbyte = h * 8
+            iv_ebyte = iv_sbyte + 8
+            iv = nineteen_ivs[iv_sbyte:iv_ebyte]
+            # Decrypt each 512 Byte packet header using the 3DES key and a
+            # sequence of IVs held in the packet information.
+            sbyte = h * 512
+            ebyte = sbyte + 512
+            desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
+            payload += desobj.decrypt(packet.headers[sbyte:ebyte])
+        # At this point, the payload contains 19 headers so the length should
+        # be 19 * 512 Bytes.
+        assert len(payload) == 9728
+        # Add a fake 512 byte header to the bottom of the header stack. This
+        # replaces the first header that we removed.
+        payload += Crypto.Random.get_random_bytes(512)
+        assert len(payload) == 10240
+        payload += desobj.decrypt(packet.body)
+        assert len(payload) == 20480
+        header = "::\n"
+        header += "Remailer-Type: %s\n\n" % config.get('general', 'version')
+        header += "-----BEGIN REMAILER MESSAGE-----\n"
+        header += "%s\n" % len(payload)
+        header += "%s\n" % MD5.new(data=payload).hexdigest()
+        self.body = header + self.b64wrap(payload, 40) + "\n"
+        self.body += "-----END REMAILER MESSAGE-----\n"
+        # Put the addy into a list so it matches the format returned by exit
+        # messages, even though there's only ever one next-hop.
+        self.dests = self.unpad([addy])
+        # Return a blank list of headers so intermediate messages match the
+        # format of exits.
+        self.heads = []
 
     def exit_message(self, packet):
         """Packet type 1 (final hop):
@@ -180,6 +215,18 @@ class MixPayload():
         for e in range(len(padded)):
             padded[e] = padded[e].rstrip("\x00")
         return padded
+
+    def b64wrap(self, binary, n):
+        """Take a binary string, encode it as Base65 and wrap it to lines of
+           length n.
+        """
+        s = binary.encode("base64")
+        s = ''.join(s.split("\n"))
+        multiline = ""
+        while len(s) > 0:
+            multiline += s[:n] + "\n"
+            s = s[n:]
+        return multiline.rstrip()
 
 
 def unpack(packet):
