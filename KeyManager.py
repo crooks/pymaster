@@ -49,18 +49,26 @@ class KeyUtils():
         return multiline.rstrip()
 
     def date_prevalid(self, created):
+        if type(created) == str:
+            created = timing.dateobj(created)
         try:
-            return timing.dateobj(created) > timing.now()
+            return created > timing.now()
         except ValueError:
             # If the date is corrupt, assume it's prevalid
             return True
 
     def date_expired(self, expires):
+        if type(expires) == str:
+            expires = timing.dateobj(expires)
         try:
-            return timing.dateobj(expires) < timing.now()
+            return expires < timing.now()
         except ValueError:
             # If the date is corrupt, assume it's expired
             return True
+
+    def date_grace(self, expires):
+        grace = timing.daydelta(expires, config.get('keys', 'validity_days'))
+        return grace
 
     def pem_export(self, keyobj, fn):
         pem = keyobj.exportKey(format='PEM')
@@ -106,15 +114,21 @@ class KeyUtils():
 
 class SecretKey(KeyUtils):
     def __init__(self):
-        secring = config.get('keys', 'secring')
-        if not os.path.isfile(secring):
-            raise Exception("%s: Secring file not found" % secring)
-        self.secring = secring
-        self.read_secring()
+        self.secring = config.get('keys', 'secring')
+        if not os.path.isfile(self.secring):
+            # If the Secret Keyring doesn't exist, we certainly want to
+            # generate a new keypair.
+            self.newkeys()
+        else:
+            self.read_secring()
+        # self.cache is always defined because read_keyring initializes it.
         if len(self.cache) == 0:
             # We have no valid keys!  Better generate a new Secret/Public pair
-            # and write them to the approprite files.
-            self.newkeys(cacheit=True)
+            # and write them to the approprite files.  This should probably
+            # only happen on initiation of a new remailer or after a very long
+            # period of inactivity.  At all other times the expire/renew
+            # process should take care of it.
+            self.newkeys()
 
     def __setitem__(self, keyid, keytup):
         self.cache[keyid] = keytup
@@ -126,11 +140,17 @@ class SecretKey(KeyUtils):
             self.read_secring()
             if not keyid in self.cache:
                 return None
-        key, expires = self.cache[keyid]
+        key, expires, grace = self.cache[keyid]
         if self.date_expired(expires):
-            # Key has expired.  Delete it from the cache
-            del self.cache[keyid]
-            return None
+            # Key has expired.  Check if we have another valid key and if not,
+            # create a new keypair.
+            if len(self.cache) == 1:
+                self.newkeys()
+            if self.date_expired(grace):
+                # Key is beyond its expiry and grace.  Delete it from the
+                # Cache, never again to be trusted.
+                del self.cache[keyid]
+                return None
         return key
         
     def test(self):
@@ -147,31 +167,25 @@ class SecretKey(KeyUtils):
         sesskey = pkcs1.encrypt(deskey)
         print len(sesskey)
 
-    def newkeys(self, cacheit=False):
+    def newkeys(self):
         """Generate a new Secret/Public key and write them to the configured
         files.  In the case of the Secret Key, it's appended to Secring.  The
         Public Key overwrites the existing file.
         """
 
-        # Make a static datestamp
-        today = timing.today()
         keyobj = RSA.generate(1024)
         #public = RSA.public(keyobj)
         secret, public = self.rsaobj2mix(keyobj)
         keyid = MD5.new(data=public[2:258]).hexdigest()
-        if cacheit:
-            # cacheit was explicitly requested so we put the generated key
-            # into the key cache.
-            self.cache[keyid] = (keyobj, today)
-        #mixpub = self.rsaobj2mix(public)
         iv = Crypto.Random.get_random_bytes(8)
         pwhash = MD5.new(data=config.get('general', 'passphrase')).digest()
         des = DES3.new(pwhash, DES3.MODE_CBC, IV=iv)
         secenc = des.encrypt(secret)
+        expire = timing.future(days=config.getint('keys', 'validity_days'))
         f = open(config.get('keys', 'secring'), 'a')
         f.write('-----Begin Mix Key-----\n')
-        f.write('Created: %s\n' % today)
-        f.write('Expires: %s\n' % timing.datestamp(timing.future(days=390)))
+        f.write('Created: %s\n' % timing.today())
+        f.write('Expires: %s\n' % timing.datestamp(expire))
         f.write('%s\n' % keyid)
         f.write('0\n')
         f.write('%s' % iv.encode('base64'))
@@ -194,6 +208,8 @@ class SecretKey(KeyUtils):
         f.write('%s\n' % self.wrap(public.encode("base64"), 40))
         f.write('-----End Mix Key-----\n\n')
         f.close()
+        # Re-read the keyring in order to cache new entry.
+        self.read_secring()
 
 
     def generate(self, keysize=1024):
@@ -273,9 +289,9 @@ class SecretKey(KeyUtils):
                 continue
             lcount += 1
             if lcount == 1 and line.startswith("Created:"):
-                created = line.split(": ")[1].rstrip()
+                created = timing.dateobj(line.split(": ")[1].rstrip())
             elif lcount == 2 and line.startswith("Expires:"):
-                expires = line.split(": ")[1].rstrip()
+                expires = timing.dateobj(line.split(": ")[1].rstrip())
                 if (self.date_prevalid(created) or
                     self.date_expired(expires)):
                     # Ignore this key, it's not valid at this time.
@@ -292,7 +308,10 @@ class SecretKey(KeyUtils):
                 plainkey = self.decrypt(key.decode("base64"), iv)
                 if keyid == MD5.new(data=plainkey[2:258]).hexdigest():
                     keyobj = self.sec_construct(plainkey)
-                    self.cache[keyid] = (keyobj, expires)
+                    # The cache contains three objects: The key, the expiration
+                    # date of the key and the grace period beyond expiration.
+                    self.cache[keyid] = (keyobj, expires,
+                                         self.date_grace(expires))
                 continue
             else:
                 key += line
@@ -325,6 +344,7 @@ class PublicKey(KeyUtils):
         self.cache = {}
 
     def __setitem__(self, name, headtup):
+        assert len(headtup) == 3
         self.cache[name] = headtup
 
     def __getitem__(self, name):

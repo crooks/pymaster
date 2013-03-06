@@ -100,6 +100,8 @@ class Config():
         self.makeopt('keys', 'pubring', os.path.join(keypath, 'pubring.mix'))
         self.makeopt('keys', 'pubkey', os.path.join(keypath, 'key.txt'))
         self.makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
+        self.config.set('keys', 'validity_days', 372)
+        self.config.set('keys', 'grace_days', 28)
         # Email options
         mailpath = self.makepath(basedir, 'Maildir', 'maildir')
         self.mkdir(os.path.join(mailpath, 'cur'))
