@@ -92,6 +92,10 @@ class Config():
         else:
             configfile = os.path.join(homedir, '.pymasterrc')
 
+        if not self.config.has_option('mail', 'mid'):
+            middomain = self.config.get('mail', 'address').split('@', 1)[1]
+            self.config.set('mail', 'mid', middomain)
+
         self.config.add_section('paths')
         if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
             self.config.read(configfile)
@@ -108,6 +112,8 @@ class Config():
         self.makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
         self.config.set('keys', 'validity_days', 372)
         self.config.set('keys', 'grace_days', 28)
+        # Mixmaster Pool
+        poolpath = self.makepath(basedir, 'pool', 'pool')
         # Email options
         mailpath = self.makepath(basedir, 'Maildir', 'maildir')
         self.mkdir(os.path.join(mailpath, 'cur'))
