@@ -30,6 +30,7 @@ from Crypto.PublicKey import RSA
 import Crypto.Random
 import Config
 import KeyManager
+import Utils
 
 
 class ValidationError(Exception):
@@ -122,19 +123,16 @@ class MixPayload():
         assert len(payload) == 10240
         payload += desobj.decrypt(packet.body)
         assert len(payload) == 20480
-        header = "::\n"
-        header += "Remailer-Type: %s\n\n" % config.get('general', 'version')
-        header += "-----BEGIN REMAILER MESSAGE-----\n"
-        header += "%s\n" % len(payload)
-        header += "%s\n" % MD5.new(data=payload).hexdigest()
-        self.body = header + self.b64wrap(payload, 40) + "\n"
-        self.body += "-----END REMAILER MESSAGE-----\n"
-        # Put the addy into a list so it matches the format returned by exit
-        # messages, even though there's only ever one next-hop.
-        self.dests = self.unpad([addy])
-        # Return a blank list of headers so intermediate messages match the
-        # format of exits.
-        self.heads = []
+        f = open(Utils.poolfn('m'), 'w')
+        f.write("To: %s\n\n" % addy.rstrip("\x00"))
+        f.write("::\n")
+        f.write("Remailer-Type: %s\n\n" % config.get('general', 'version'))
+        f.write("-----BEGIN REMAILER MESSAGE-----\n")
+        f.write("%s\n" % len(payload))
+        f.write("%s\n" % MD5.new(data=payload).hexdigest())
+        f.write(self.b64wrap(payload, 40) + "\n")
+        f.write("-----END REMAILER MESSAGE-----\n")
+        f.close()
 
     def exit_message(self, packet):
         """Packet type 1 (final hop):
@@ -206,9 +204,12 @@ class MixPayload():
         # The length of the message is prepended by the 4 Byte length,
         # hence why we need to add 4 to ebyte.
         ebyte = length + 4
-        self.body = body[sbyte:ebyte]
-        self.dests = self.unpad(destlist)
-        self.heads = self.unpad(headlist)
+        dests = ','.join(self.unpad(destlist))
+        heads = self.unpad(headlist)
+        f = open(Utils.poolfn('e'), 'w')
+        f.write("To: %s\n\n" % dests)
+        f.write(body[sbyte:ebyte])
+        f.close()
 
     def unpad(self, padded):
         assert type(padded) == list
