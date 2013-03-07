@@ -23,18 +23,18 @@
 import sys
 import os.path
 import mailbox
+import email
+import smtplib
 from Crypto.Hash import MD5
 import Config
+import Utils
 
 
 class MessageError(Exception):
     pass
 
-class Payload():
-    pass
 
-
-class Message():
+class Mailbox():
     def __init__(self):
         self.inbox = mailbox.Maildir(config.get('paths', 'maildir'),
                                      factory=None, create=False)
@@ -44,7 +44,6 @@ class Message():
         # envelops all processing.
         return self.inbox.iterkeys()
 
-
     def read_message(self, key):
         """-----BEGIN REMAILER MESSAGE-----
            [packet length ]
@@ -53,10 +52,27 @@ class Message():
            -----END REMAILER MESSAGE-----
         """
 
-        msgtxt = self.inbox.get_string(key)
-        p = Payload()
         mixmes = False
-        for line in msgtxt.split("\n"):
+        # It's a reasonable assumption that headers are at the top of a mail
+        # message.
+        inhead = True
+        subject = None
+        msgfrom = None
+        f = self.inbox.get_file(key)
+        for line in f:
+            if line.startswith("From: "):
+                msgfrom = line.split(": ", 1)[1].strip().lower()
+            elif line.startswith("Subject: "):
+                subject = line.split(": ", 1)[1].strip().lower()
+            elif line == "\n":
+                if (subject == 'remailer-key' and
+                    msgfrom is not None):
+                    send_remailer_key(msgfrom)
+                    break
+                inhead = False
+            elif inhead:
+                # Go no further than this until we're not handling headers.
+                continue
             if line.startswith("-----BEGIN REMAILER MESSAGE-----"):
                 if mixmes:
                     raise MessageError("Corrupted. Got multiple Begin "
@@ -83,27 +99,43 @@ class Message():
                 else:
                     # Append a Base64 line to the packet.
                     packet += line
-        if not mixmes:
-            # There is no Begin Cutmark in the message.  Not an issue.  Just
-            # means this isn't a Mixmaster message.
-            raise MessageError("EOF without Begin Cutmark.")
-        packet = packet.decode("base64")
-        # Validate the length and digest of the packet.
-        if length != len(packet):
-            raise MessageError("Incorrect packet Length")
-        if digest != MD5.new(data=packet).digest():
-            raise MessageError("Mixmaster message digest failed")
-        p.header = packet[0:512]
-        p.headers = packet[512:10240]
-        p.body = packet[10240:]
-        return p
+        f.close()
+        if mixmes:
+            packet = packet.decode("base64")
+            # Validate the length and digest of the packet.
+            if length != len(packet):
+                raise MessageError("Incorrect packet Length")
+            if digest != MD5.new(data=packet).digest():
+                raise MessageError("Mixmaster message digest failed")
+            self.header = packet[0:512]
+            self.headers = packet[512:10240]
+            self.body = packet[10240:]
+        return mixmes
+
+
+def send_remailer_key(recipient):
+    #smtp = smtplib.SMTP(config.get('mail', 'server'))
+    payload = '%s\n\n' % Utils.capstring()
+    payload += 'Here is the Mixmaster key:\n\n'
+    payload += '=-=-=-=-=-=-=-=-=-=-=-=\n'
+    f = open(config.get('keys', 'pubkey'), 'r')
+    payload += f.read()
+    f.close()
+    msg = email.message_from_string(payload)
+    msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                               config.get('mail', 'address'))
+    msg["Subject"] = "Remailer key for %s" % config.get('general',
+                                                        'shortname')
+    msg['Date'] = email.utils.formatdate()
+    msg['To'] = recipient
+    #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
 
 config = Config.Config().config
 if (__name__ == "__main__"):
-    m = Message()
-    for k in m.messages():
+    m = Mailbox()
+    for msg in m.messages():
         try:
-            payloadobj = m.read_message(k)
+            m.read_message(msg)
         except MessageError, e:
-            print "%s: Message Error (%s)" % (k, e)
-        print len(payloadobj.header)
+            pass
+            #print "Exception: %s" % e

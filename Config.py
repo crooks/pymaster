@@ -59,8 +59,10 @@ class Config():
 
         self.config.add_section('general')
         self.config.set('general', 'shortname', 'pymaster')
+        self.config.set('general', 'longname', 'Pymaster Remailer')
         self.config.set('general', 'loglevel', 'info')
         self.config.set('general', 'middleman', 0)
+        self.config.set('general', 'klen', 128)
         self.config.set('general', 'passphrase', 'A badly configured server')
 
         self.config.add_section('chain')
@@ -70,6 +72,10 @@ class Config():
         self.config.set('chain', 'relfinal', 95)
         self.config.set('chain', 'distance', 2)
         self.config.set('chain', 'default', '*,*,*')
+
+        self.config.add_section('pool')
+        self.config.set('pool', 'poolsize', 45)
+        self.config.set('pool', 'rate', 65)
 
         self.config.add_section('mail')
         self.config.set('mail', 'server', 'localhost')
