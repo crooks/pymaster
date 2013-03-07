@@ -21,8 +21,12 @@
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import Config
+import Crypto.Random
+import os.path
 
 def capstring():
+    """Return the remailer capstring.
+    """
     caps = '$remailer{\"%s\"} = ' % config.get('general', 'shortname')
     caps += '\"<%s> mix' % config.get('mail', 'address')
     if config.getboolean('general', 'middleman'):
@@ -33,6 +37,17 @@ def capstring():
     caps += '\";'
     return caps
 
+def poolfn(prefix):
+    """Make up a suitably random filename for the pool entry.
+    """
+    while True:
+        fn = prefix + Crypto.Random.get_random_bytes(8).encode("hex")
+        fq = os.path.join(config.get('paths', 'pool'), fn)
+        if not os.path.isfile(fq):
+            break
+    return fq
+
 config = Config.Config().config
 if (__name__ == "__main__"):
     print capstring()
+    print poolfn('m')
