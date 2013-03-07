@@ -181,11 +181,13 @@ class SecretKey(KeyUtils):
         pwhash = MD5.new(data=config.get('general', 'passphrase')).digest()
         des = DES3.new(pwhash, DES3.MODE_CBC, IV=iv)
         secenc = des.encrypt(secret)
-        expire = timing.future(days=config.getint('keys', 'validity_days'))
+        today = timing.today()
+        expire = timing.datestamp(timing.future(
+                                 days=config.getint('keys', 'validity_days')))
         f = open(config.get('keys', 'secring'), 'a')
         f.write('-----Begin Mix Key-----\n')
-        f.write('Created: %s\n' % timing.today())
-        f.write('Expires: %s\n' % timing.datestamp(expire))
+        f.write('Created: %s\n' % today)
+        f.write('Expires: %s\n' % expire)
         f.write('%s\n' % keyid)
         f.write('0\n')
         f.write('%s' % iv.encode('base64'))
@@ -201,7 +203,8 @@ class SecretKey(KeyUtils):
             conf = "MC"
         else:
             conf = "C"
-        f.write('%s\n\n' % conf)
+        f.write('%s ' % conf)
+        f.write('%s %s\n\n' % (today, expire))
         f.write('-----Begin Mix Key-----\n')
         f.write('%s\n' % keyid)
         f.write('%s\n' % len(public))
