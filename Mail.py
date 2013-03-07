@@ -113,6 +113,16 @@ class Mailbox():
         return mixmes
 
 
+def poolsend(filename):
+    fq = os.path.join(config.get('paths', 'pool'), filename)
+    f = open(fq, 'r')
+    msg = email.message_from_file(f)
+    f.close()
+    msg['From'] = config.get('mail', 'address')
+    msg['Date'] = email.utils.formatdate()
+    #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+    print msg.as_string()
+
 def send_remailer_key(recipient):
     #smtp = smtplib.SMTP(config.get('mail', 'server'))
     payload = '%s\n\n' % Utils.capstring()
@@ -133,9 +143,10 @@ def send_remailer_key(recipient):
 config = Config.Config().config
 if (__name__ == "__main__"):
     m = Mailbox()
-    for msg in m.messages():
-        try:
-            m.read_message(msg)
-        except MessageError, e:
-            pass
+    #for msg in m.messages():
+    #    try:
+    #        m.read_message(msg)
+    #    except MessageError, e:
+    #        pass
             #print "Exception: %s" % e
+    poolsend('m4c9aec5dd1886501')
