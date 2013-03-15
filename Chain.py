@@ -22,7 +22,7 @@
 
 import os.path
 import Crypto.Random.random
-import Config
+from Config import config
 
 
 class ChainError(Exception):
@@ -165,6 +165,5 @@ class Chain():
         return chainlist
 
 
-config = Config.Config().config
 c = Chain()
 print c.chain("*, austria, *, *, *")

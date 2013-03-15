@@ -28,202 +28,116 @@ import re
 
 WRITE_DEFAULT_CONFIG = False
 
+def mkdir(directory):
+    if not os.path.isdir(directory):
+        os.mkdir(directory, 0700)
+        sys.stdout.write("Created directory %s\n" % directory)
 
-class Config():
-    def __init__(self):
-        # Configure the Config Parser.
-        self.config = ConfigParser.RawConfigParser()
-        self.make_config()
-
-    def mkdir(self, directory):
-        if not os.path.isdir(directory):
-            os.mkdir(directory, 0700)
-            sys.stdout.write("Created directory %s\n" % directory)
-
-    def makepath(self, basedir, subdir, val):
-        if self.config.has_option('paths', val):
-            path = self.config.get('paths', val)
-        else:
-            path = os.path.join(basedir, subdir)
-            self.config.set('paths', subdir, path)
-        self.mkdir(path)
-        return path
-
-    def makeopt(self, sect, opt, val):
-        if not self.config.has_option(sect, opt):
-            self.config.set(sect, opt, val)
-
-    def make_config(self):
-        # By default, all the paths are subdirectories of the homedir.
-        homedir = os.path.expanduser('~')
-
-        self.config.add_section('general')
-        self.config.set('general', 'shortname', 'pymaster')
-        self.config.set('general', 'longname', 'Pymaster Remailer')
-        self.config.set('general', 'loglevel', 'info')
-        self.config.set('general', 'middleman', 0)
-        self.config.set('general', 'klen', 128)
-        self.config.set('general', 'passphrase', 'A badly configured server')
-
-        self.config.add_section('chain')
-        self.config.set('chain', 'minlat', 20)
-        self.config.set('chain', 'maxlat', 120)
-        self.config.set('chain', 'minrel', 80)
-        self.config.set('chain', 'relfinal', 95)
-        self.config.set('chain', 'distance', 2)
-        self.config.set('chain', 'default', '*,*,*')
-
-        self.config.add_section('pool')
-        self.config.set('pool', 'poolsize', 45)
-        self.config.set('pool', 'rate', 65)
-
-        self.config.add_section('mail')
-        self.config.set('mail', 'server', 'localhost')
-        self.config.set('mail', 'domain', 'here.invalid')
-        self.config.set('mail', 'address', 'pymaster@domain.invalid')
-        self.config.set('mail', 'outbound_address', 'noreply@here.invalid')
-
-        # Try and process the .aam2mailrc file.  If it doesn't exist, we
-        # bailout as some options are compulsory.
-        if options.rc:
-            configfile = options.rc
-        elif 'PYMASTER' in os.environ:
-            configfile = os.environ['PYMASTER']
-        else:
-            configfile = os.path.join(homedir, '.pymasterrc')
-
-        if not self.config.has_option('mail', 'mid'):
-            middomain = self.config.get('mail', 'address').split('@', 1)[1]
-            self.config.set('mail', 'mid', middomain)
-
-        self.config.add_section('paths')
-        if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
-            self.config.read(configfile)
-
-        # We have to set basedir _after_ reading the config file because
-        # other paths need to default to subpaths of it.
-        basedir = self.makepath(homedir, 'pymaster', 'basedir')
-        # Keyring path.  Default: ~/pymaster/keyring
-        self.config.add_section('keys')
-        keypath = self.makepath(basedir, 'keyring', 'keyring')
-        self.makeopt('keys', 'secring', os.path.join(keypath, 'secring.mix'))
-        self.makeopt('keys', 'pubring', os.path.join(keypath, 'pubring.mix'))
-        self.makeopt('keys', 'pubkey', os.path.join(keypath, 'key.txt'))
-        self.makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
-        self.config.set('keys', 'validity_days', 372)
-        self.config.set('keys', 'grace_days', 28)
-        # Mixmaster Pool
-        poolpath = self.makepath(basedir, 'pool', 'pool')
-        # Email options
-        mailpath = self.makepath(basedir, 'Maildir', 'maildir')
-        self.mkdir(os.path.join(mailpath, 'cur'))
-        self.mkdir(os.path.join(mailpath, 'new'))
-        self.mkdir(os.path.join(mailpath, 'tmp'))
-        self.config.add_section('etc')
-        etcpath = self.makepath(basedir, 'etc', 'etc')
-        self.makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
-        self.makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
-        libpath = self.makepath(basedir, 'lib', 'lib')
-        self.makeopt('general', 'idlog', os.path.join(libpath, 'idlog.db'))
-
-        if WRITE_DEFAULT_CONFIG:
-            with open('config.sample', 'wb') as configfile:
-                self.config.write(configfile)
-        # Setting this last prevents it being overridden in the config file.
-        # Hardly security but it doesn't really matter.
-        self.config.set('general', 'version', 'pymaster-0.1a')
-
-
-class Parser():
-    def __init__(self, fn):
-        assert type(fn) is str
-        self.fn = fn
-        self._reload()
-
-    def _reload(self):
-        self.regex, self.text = file2regex(self.fn)
-        self.reload_time = timing.future(hours=1)
-
-    def validate(self, candidates, allhits=True):
-        """If allhits is True, validate that all the candidates in a given list
-        match at least one of the conditions stated.  If allhists is False then
-        validate that *any* of the candidates match a condition.
-        """
-
-        # struct.unpack returns a tuple
-        assert type(candidates) is tuple
-        # Check if it's time to reload the config file.
-        if timing.now() > self.reload_time:
-            self._reload()
-        # Returns True when all candidates match a condition.
-        allhit = False
-        # Returns True if any candidate matchs a condition.
-        onehit = False
-        hits = 0
-        for c in candidates:
-            cc = c.rstrip('\x00')
-            if self.regex and self.regex.search(cc):
-                hits += 1
-            elif self.text and cc in self.text:
-                hits += 1
-        if allhits:
-            return len(candidates) == hits
-        else:
-            return hits > 0
-
-
-def file2regex(filename):
-    """Read a given file and return a list of items and, if regex formatted, a
-    compiled Regular Expression.
-
-    """
-
-    reglines = []
-    listlines = []
-    for line in file2list(filename):
-        if line.startswith("/") and line.endswith("/"):
-            reglines.append(line[1:-1])
-        else:
-            listlines.append(line)
-    if len(reglines) == 0:
-        # No valid entires exist in the file.
-        print '%s: No valid entries found' % filename
-        compiled = False
+def makepath(basedir, subdir, val):
+    if config.has_option('paths', val):
+        path = config.get('paths', val)
     else:
-        regex = '|'.join(reglines)
-        # This should never happen but best to check as || will match
-        # everything.
-        regex = regex.replace('||', '|')
-        compiled = re.compile(regex)
-    return compiled, listlines
+        path = os.path.join(basedir, subdir)
+        config.set('paths', subdir, path)
+    mkdir(path)
+    return path
+
+def makeopt(sect, opt, val):
+    if not config.has_option(sect, opt):
+        config.set(sect, opt, val)
 
 
-def file2list(filename):
-    if not os.path.isfile(filename):
-        print "%s: File not found" % filename
-        return []
-    valid = []
-    f = open(filename, 'r')
-    for line in f:
-        # Strip comments (including inline)
-        content = line.split('#', 1)[0].strip()
-        # Ignore empty lines
-        if len(content) > 0:
-            valid.append(content)
-    f.close()
-    return valid
+# Configure the Config Parser.
+config = ConfigParser.RawConfigParser()
 
-# OptParse comes first as ConfigParser depends on it to override the path to
-# the config file.
-parser = OptionParser()
+# By default, all the paths are subdirectories of the homedir.
+homedir = os.path.expanduser('~')
 
-parser.add_option("--config", dest="rc",
-                      help="Override PyMaster config file location")
-parser.add_option("--start", dest="start", action="store_true",
-                      help="Start the aam2mail daemon")
-parser.add_option("--stop", dest="stop", action="store_true",
-                      help="Stop the aam2mail daemon")
-parser.add_option("--restart", dest="restart", action="store_true",
-                      help="Restart the aam2mail daemon")
+config.add_section('general')
+config.set('general', 'shortname', 'pymaster')
+config.set('general', 'longname', 'Pymaster Remailer')
+config.set('general', 'loglevel', 'info')
+config.set('general', 'middleman', 0)
+config.set('general', 'klen', 128)
+config.set('general', 'interval', 60)
+config.set('general', 'passphrase', 'A badly configured server')
 
-(options, args) = parser.parse_args()
+config.add_section('logging')
+config.set('logging', 'level', 'debug')
+config.set('logging', 'format', '%(asctime)s %(name)s %(levelname)s %(message)s')
+config.set('logging', 'datefmt', '%Y-%m-%d %H:%M:%S')
+config.set('logging', 'retain', 7)
+
+config.add_section('chain')
+config.set('chain', 'minlat', 20)
+config.set('chain', 'maxlat', 120)
+config.set('chain', 'minrel', 80)
+config.set('chain', 'relfinal', 95)
+config.set('chain', 'distance', 2)
+config.set('chain', 'default', '*,*,*')
+
+config.add_section('pool')
+config.set('pool', 'size', 45)
+config.set('pool', 'rate', 65)
+config.set('pool', 'indummy', 10)
+config.set('pool', 'outdummy', 90)
+config.set('pool', 'interval', '15m')
+
+config.add_section('mail')
+config.set('mail', 'server', 'localhost')
+config.set('mail', 'domain', 'here.invalid')
+config.set('mail', 'address', 'pymaster@domain.invalid')
+config.set('mail', 'outbound_address', 'noreply@here.invalid')
+config.set('mail', 'interval', '15m')
+
+# Try and process the .aam2mailrc file.  If it doesn't exist, we
+# bailout as some options are compulsory.
+#if options.rc:
+#    configfile = options.rc
+if 'PYMASTER' in os.environ:
+    configfile = os.environ['PYMASTER']
+else:
+    configfile = os.path.join(homedir, '.pymasterrc')
+
+if not config.has_option('mail', 'mid'):
+    middomain = config.get('mail', 'address').split('@', 1)[1]
+    config.set('mail', 'mid', middomain)
+
+config.add_section('paths')
+if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
+    config.read(configfile)
+
+# We have to set basedir _after_ reading the config file because
+# other paths need to default to subpaths of it.
+basedir = makepath(homedir, 'pymaster', 'basedir')
+# Keyring path.  Default: ~/pymaster/keyring
+config.add_section('keys')
+keypath = makepath(basedir, 'keyring', 'keyring')
+makeopt('keys', 'secring', os.path.join(keypath, 'secring.mix'))
+makeopt('keys', 'pubring', os.path.join(keypath, 'pubring.mix'))
+makeopt('keys', 'pubkey', os.path.join(keypath, 'key.txt'))
+makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
+config.set('keys', 'validity_days', 372)
+config.set('keys', 'grace_days', 28)
+# Logging Directory
+logpath = makepath(basedir, 'log', 'log')
+# Mixmaster Pool
+poolpath = makepath(basedir, 'pool', 'pool')
+# Email options
+mailpath = makepath(basedir, 'Maildir', 'maildir')
+mkdir(os.path.join(mailpath, 'cur'))
+mkdir(os.path.join(mailpath, 'new'))
+mkdir(os.path.join(mailpath, 'tmp'))
+config.add_section('etc')
+etcpath = makepath(basedir, 'etc', 'etc')
+makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
+makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
+libpath = makepath(basedir, 'lib', 'lib')
+makeopt('general', 'idlog', os.path.join(libpath, 'idlog.db'))
+
+if WRITE_DEFAULT_CONFIG:
+    with open('config.sample', 'wb') as configfile:
+        config.write(configfile)
+# Setting this last prevents it being overridden in the config file.
+# Hardly security but it doesn't really matter.
+config.set('general', 'version', 'pymaster-0.1a')

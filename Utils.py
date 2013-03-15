@@ -20,9 +20,12 @@
 # You should have received a copy of the GNU General Public License along with
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import Config
+from Config import config
 import Crypto.Random
 import os.path
+import timing
+import logging
+import re
 
 def capstring():
     """Return the remailer capstring.
@@ -31,7 +34,7 @@ def capstring():
     caps += '\"<%s> mix' % config.get('mail', 'address')
     if config.getboolean('general', 'middleman'):
         caps += ' middle'
-    if config.getint('pool', 'poolsize') >= 5:
+    if config.getint('pool', 'size') >= 5:
         caps += ' reord'
     caps += ' klen%s' % config.getint('general', 'klen')
     caps += '\";'
@@ -47,7 +50,64 @@ def poolfn(prefix):
             break
     return fq
 
-config = Config.Config().config
+def msgid():
+    return "<%s.%s@%s>" % (timing.msgidstamp(),
+                           Crypto.Random.get_random_bytes(4).encode("hex"),
+                           config.get('mail', 'mid'))
+
+def file2regex(filename):
+    """Read a given file and return a list of items and, if regex formatted, a
+    compiled Regular Expression.
+
+    """
+
+    reglines = []
+    listlines = []
+    for line in file2list(filename):
+        if line.startswith("/") and line.endswith("/"):
+            reglines.append(line[1:-1])
+        else:
+            listlines.append(line)
+    if len(reglines) == 0:
+        # No valid regex entires exist in the file.
+        compiled = False
+    else:
+        regex = '|'.join(reglines)
+        # This should never happen but best to check as || will match
+        # everything.
+        regex = regex.replace('||', '|')
+        compiled = re.compile(regex)
+    return compiled, listlines
+
+
+def file2list(filename):
+    if not os.path.isfile(filename):
+        print "%s: File not found" % filename
+        return []
+    valid = []
+    f = open(filename, 'r')
+    for line in f:
+        # Strip comments (including inline)
+        content = line.split('#', 1)[0].strip()
+        # Ignore empty lines
+        if len(content) > 0:
+            valid.append(content)
+    f.close()
+    return valid
+
+
 if (__name__ == "__main__"):
+    logfmt = config.get('logging', 'format')
+    datefmt = config.get('logging', 'datefmt')
+    log = logging.getLogger("Pymaster")
+    log.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
+    log.addHandler(handler)
+
     print capstring()
     print poolfn('m')
+    print msgid()
+    destalw = ConfFiles(config.get('etc', 'dest_alw'), 'dest_alw')
+    print dir(destalw)
+    print destalw.hit('steve@mixmin.net')

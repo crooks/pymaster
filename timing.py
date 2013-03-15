@@ -18,11 +18,27 @@
 # added and auto-expired after a defined period.
 
 import datetime
+import time
 
 
 def future(days=0, hours=0, mins=0, secs=0):
     return now() + datetime.timedelta(days=days, hours=hours,
                                       minutes=mins, seconds=secs)
+
+def dhms_future(timestr):
+    """Take a string formatted as 00h and convert it to a time in the future.
+    """
+    period = int(timestr[0:-1])
+    unit = timestr[-1].lower()
+    if unit == "d":
+        return future(days=period)
+    elif unit == "h":
+        return future(hours=period)
+    elif unit == "m":
+        return future(mins=period)
+    elif unit == "s":
+        return future(secs=period)
+    raise ValueError("%s: Unknown time period char" % unit)
 
 
 def daydelta(dateobj, days):
@@ -42,7 +58,9 @@ def datestamp(stamp):
 
 
 def dateobj(datestr):
-    """Take a string formated date (yyyymmdd) and return a datetime object."""
+    """Take a string formated date (yyyy-mm-dd) and return a datetime
+    object.
+    """
     return datetime.datetime.strptime(datestr, '%Y-%m-%d')
 
 
@@ -71,8 +89,12 @@ def next_midnight():
     """
     return last_midnight() + datetime.timedelta(days=1)
 
+def sleep(n):
+    time.sleep(n)
+
 if (__name__ == "__main__"):
     print timestamp(future(hours=1))
     print nowstamp()
     print last_midnight()
     print next_midnight()
+    print timestamp(dhms_future("15m"))

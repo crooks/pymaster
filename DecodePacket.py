@@ -24,13 +24,17 @@ import struct
 import sys
 import os.path
 import shelve
+import logging
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
 import Crypto.Random
-import Config
+from Config import config
 import KeyManager
 import Utils
+
+
+log = logging.getLogger("Pymaster.DecodePacket")
 
 
 class ValidationError(Exception):
@@ -42,11 +46,8 @@ class DummyMessage(Exception):
 
 
 class MixPayload():
-    def set_deskey(self, deskey):
-        if len(deskey) != 24:
-            raise ValidationError("Session key returned incorrect length "
-                                  "3DES key")
-        self.deskey = deskey
+    def __init__(self):
+        self.sk = KeyManager.SecretKey()
 
     def encrypted_head(self, packet):
         """Packet ID                            [ 16 bytes]
@@ -64,14 +65,14 @@ class MixPayload():
         The Packet_Info is a flexible list of elements depending on the
         TypeID.
         """
-        if len(packet.decrypted) != 328:
+        if len(packet['decrypted']) != 328:
             raise ValidationError("Incorrect number of Bytes decrypted")
         (packet_id,
          deskey,
-         packet_type) = struct.unpack("@16s24sB", packet.decrypted[0:41])
-        self.packet_id = packet_id
-        self.set_deskey(deskey)
-        self.msgtype = packet_type
+         packet_type) = struct.unpack("@16s24sB", packet['decrypted'][0:41])
+        if len(deskey) != 24:
+            raise ValidationError("Session key returned incorrect length "
+                                  "3DES key")
         if packet_type == 0:
             self.intermediate_message(packet, deskey)
         elif packet_type == 1:
@@ -92,10 +93,11 @@ class MixPayload():
         # intermediate packet.  This is because the intermediate components
         # vary in length, depending on message type.
         (nineteen_ivs, addy, timestamp,
-         msgdigest) = struct.unpack('@152s80s7s16s', packet.decrypted[41:296])
+         msgdigest) = struct.unpack('@152s80s7s16s',
+                                    packet['decrypted'][41:296])
         # Checksum includes everything up to the Message Digest.
         # Don't forget this needs to include the 7 Byte Timestamp!
-        checksum = MD5.new(data=packet.decrypted[0:280]).digest()
+        checksum = MD5.new(data=packet['decrypted'][0:280]).digest()
         if checksum != msgdigest:
             raise ValidationError("Encrypted header failed checksum")
         # The payload string will be extended as each header has a layer of
@@ -113,7 +115,7 @@ class MixPayload():
             sbyte = h * 512
             ebyte = sbyte + 512
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-            payload += desobj.decrypt(packet.headers[sbyte:ebyte])
+            payload += desobj.decrypt(packet['headers'][sbyte:ebyte])
         # At this point, the payload contains 19 headers so the length should
         # be 19 * 512 Bytes.
         assert len(payload) == 9728
@@ -121,7 +123,7 @@ class MixPayload():
         # replaces the first header that we removed.
         payload += Crypto.Random.get_random_bytes(512)
         assert len(payload) == 10240
-        payload += desobj.decrypt(packet.body)
+        payload += desobj.decrypt(packet['body'])
         assert len(payload) == 20480
         f = open(Utils.poolfn('m'), 'w')
         f.write("To: %s\n\n" % addy.rstrip("\x00"))
@@ -140,8 +142,8 @@ class MixPayload():
            Initialization vector          [  8 bytes]
         """
         (message_id, iv, timestamp,
-         msgdigest) = struct.unpack('@16s8s7s16s', packet.decrypted[41:88])
-        checksum = MD5.new(data=packet.decrypted[0:72]).digest()
+         msgdigest) = struct.unpack('@16s8s7s16s', packet['decrypted'][41:88])
+        checksum = MD5.new(data=packet['decrypted'][0:72]).digest()
         if checksum != msgdigest:
             raise ValidationError("Encrypted header failed checksum")
         return iv, message_id
@@ -154,13 +156,14 @@ class MixPayload():
            Initialization vector          [  8 bytes]
         """
         (chunk, chunks, message_id, iv, timestamp,
-         msgdigest) = struct.unpack('@BB16s8s7s16s', packet.decrypted[41:90])
+         msgdigest) = struct.unpack('@BB16s8s7s16s',
+                                    packet['decrypted'][41:90])
         packet_info = []
         packet_info.append(chunk)
         packet_info.append(chunks)
         packet_info.append(message_id)
         packet_info.append(iv)
-        checksum = MD5.new(data=packet.decrypted[0:74]).digest()
+        checksum = MD5.new(data=packet['decrypted'][0:74]).digest()
         if checksum != msgdigest:
             raise ValidationError("Encrypted header failed checksum")
 
@@ -183,7 +186,7 @@ class MixPayload():
            Header lines fields            [ 80 bytes each]
            User data section              [ up to ~2.5 MB]
         """
-        body = desobj.decrypt(packet.body)
+        body = desobj.decrypt(packet['body'])
         sbyte = 0
         ebyte = 5
         length, dfields = struct.unpack('<IB', body[sbyte:ebyte])
@@ -229,44 +232,38 @@ class MixPayload():
             s = s[n:]
         return multiline.rstrip()
 
+    def unpack(self, packet):
+        """Unpack a received Mixmaster email message header.  The spec calls
+        for 512 Bytes, of which the last 31 are padding.
 
-def unpack(packet):
-    """Unpack a received Mixmaster email message header.  The spec calls
-    for 512 Bytes, of which the last 31 are padding.
+           Public key ID                [  16 bytes]
+           Length of RSA-encrypted data [   1 byte ]
+           RSA-encrypted session key    [ 128 bytes]
+           Initialization vector        [   8 bytes]
+           Encrypted header part        [ 328 bytes]
+           Padding                      [  31 bytes]
 
-       Public key ID                [  16 bytes]
-       Length of RSA-encrypted data [   1 byte ]
-       RSA-encrypted session key    [ 128 bytes]
-       Initialization vector        [   8 bytes]
-       Encrypted header part        [ 328 bytes]
-       Padding                      [  31 bytes]
+        """
+        # Unpack the header components.  This includes the 328 Byte
+        # encrypted component.  We can ignore the 31 Bytes of padding, hence
+        # 481 Bytes instead of 512.
+        (keyid, datalen, sesskey, iv,
+         enc) = struct.unpack('@16sB128s8s328s', packet['header'][0:481])
+        if not len(sesskey) == datalen:
+            raise ValidationError("Incorrect session key size")
+        # Use the session key to decrypt the 3DES Symmetric key
+        seckey = self.sk[keyid.encode("hex")]
+        if seckey is None:
+            raise ValidationError("Secret Key not found")
+        pkcs1 = PKCS1_v1_5.new(seckey)
+        sess_deskey = pkcs1.decrypt(sesskey, "Failed")
 
-    """
-    # Unpack the header components.  This includes the 328 Byte
-    # encrypted component.  We can ignore the 31 Bytes of padding, hence
-    # 481 Bytes instead of 512.
-    mix = MixPayload()
-    (keyid, datalen, sesskey, iv,
-     enc) = struct.unpack('@16sB128s8s328s', packet.header[0:481])
-    if not len(sesskey) == datalen:
-        raise ValidationError("Incorrect session key size")
-    # Use the session key to decrypt the 3DES Symmetric key
-    seckey = sk[keyid.encode("hex")]
-    if seckey is None:
-        raise ValidationError("Secret Key not found")
-    pkcs1 = PKCS1_v1_5.new(seckey)
-    sess_deskey = pkcs1.decrypt(sesskey, "Failed")
-
-    # Process the 328 Bytes of encrypted header using our newly discovered
-    # 3DES key obtained from the pkcs1 decryption.
-    desobj = DES3.new(sess_deskey, DES3.MODE_CBC, IV=iv)
-    packet.decrypted = desobj.decrypt(enc)
-    mix.encrypted_head(packet)
-    # Unpack the 328 decrypted bytes into their component parts
-    return mix
+        # Process the 328 Bytes of encrypted header using our newly discovered
+        # 3DES key obtained from the pkcs1 decryption.
+        desobj = DES3.new(sess_deskey, DES3.MODE_CBC, IV=iv)
+        packet['decrypted'] = desobj.decrypt(enc)
+        self.encrypted_head(packet)
 
 
-config = Config.Config().config
-sk = KeyManager.SecretKey()
 if (__name__ == "__main__"):
-    pass
+    test = MixPayload()
