@@ -23,13 +23,15 @@
 import struct
 import sys
 import os.path
+import logging
 import Crypto.Random
 import Crypto.Util.number
 from Crypto.PublicKey import RSA
 from Crypto.Hash import MD5
 from Crypto.Cipher import DES3
 import timing
-import Config
+from Config import config
+
 
 
 class KeyUtils():
@@ -114,13 +116,22 @@ class KeyUtils():
 
 class SecretKey(KeyUtils):
     def __init__(self):
+        self.logname = "Pymaster.%s" % __name__
+        log = logging.getLogger(self.logname)
         self.secring = config.get('keys', 'secring')
+        # State that we last did a Cache reload at some arbitrary date in the
+        # past.
+        self.last_cache = timing.dateobj('2000-01-01')
+        # The cache will hold all the keys (as objects, keyed by keyid).
+        self.cache = {}
         if not os.path.isfile(self.secring):
             # If the Secret Keyring doesn't exist, we certainly want to
             # generate a new keypair.
+            log.info("Secret Keyring %s doesn't exist.  Generating new Key "
+                     "pair.", self.secring)
             self.newkeys()
-        else:
-            self.read_secring()
+        log.info("Performing initial Secret Key cacheing")
+        self.read_secring()
         # self.cache is always defined because read_keyring initializes it.
         if len(self.cache) == 0:
             # We have no valid keys!  Better generate a new Secret/Public pair
@@ -129,6 +140,7 @@ class SecretKey(KeyUtils):
             # period of inactivity.  At all other times the expire/renew
             # process should take care of it.
             self.newkeys()
+            self.read_secring()
 
     def __setitem__(self, keyid, keytup):
         self.cache[keyid] = keytup
@@ -137,7 +149,7 @@ class SecretKey(KeyUtils):
         if type(keyid) != str or len(keyid) != 32 or not self.ishex(keyid):
             return None
         if not keyid in self.cache:
-            self.read_secring()
+            self.read_secring(ignore_date=False)
             if not keyid in self.cache:
                 return None
         key, expires, grace = self.cache[keyid]
@@ -177,6 +189,7 @@ class SecretKey(KeyUtils):
         #public = RSA.public(keyobj)
         secret, public = self.rsaobj2mix(keyobj)
         keyid = MD5.new(data=public[2:258]).hexdigest()
+        log.info("Generated new Secret Key with Keyid: %s", keyid)
         iv = Crypto.Random.get_random_bytes(8)
         pwhash = MD5.new(data=config.get('general', 'passphrase')).digest()
         des = DES3.new(pwhash, DES3.MODE_CBC, IV=iv)
@@ -194,6 +207,8 @@ class SecretKey(KeyUtils):
         f.write('%s\n' % self.wrap(secenc.encode("base64"), 40))
         f.write('-----End Mix Key-----\n\n')
         f.close()
+        log.debug("Secret Key written to %s",
+                      config.get('keys', 'secring'))
         f = open(config.get('keys', 'pubkey'), 'w')
         f.write('%s ' % config.get('general', 'shortname'))
         f.write('%s ' % config.get('mail', 'address'))
@@ -211,9 +226,8 @@ class SecretKey(KeyUtils):
         f.write('%s\n' % self.wrap(public.encode("base64"), 40))
         f.write('-----End Mix Key-----\n\n')
         f.close()
-        # Re-read the keyring in order to cache new entry.
-        self.read_secring()
-
+        log.debug("Public Key written to %s",
+                      config.get('keys', 'pubkey'))
 
     def generate(self, keysize=1024):
         k = RSA.generate(keysize)
@@ -259,7 +273,7 @@ class SecretKey(KeyUtils):
         secret += "\x00" * (712 - len(secret))
         return secret, public
         
-    def read_secring(self):
+    def read_secring(self, ignore_date=True):
         """Read a secring.mix file and return the decryted keys.  This
         function relies on construct() to create an RSAobj.
 
@@ -273,21 +287,28 @@ class SecretKey(KeyUtils):
         -----End Mix Key-----
         """
 
-        # The cache holds all the keys (as objects, keyed by keyid).  Every
-        # time the keyring is reread (by this function), the cache is
-        # recreated.
-        self.cache = {}
+        log = logging.getLogger("%s.read_secring" % self.logname)
+        if not ignore_date and timing.last_midnight() <= self.last_cache:
+            log.debug("Not repopulating Secret Key cache.  This task is only "
+                      "performed, at most, once per day.")
+            return 0
+        log.debug("Reading Secring to cache Secret Keys.")
         f = open(self.secring)
         inkey = False
         for line in f:
             if line.startswith("-----Begin Mix Key-----"):
                 if inkey:
-                    print "Yikes, we got a Begin before an End!"
-                    sys.exit(1)
-                key = ""
-                lcount = 0
-                inkey = True
-                continue
+                    log.warn("Got an unexpected Begin Mix Key cutmark "
+                             "when already within a Keyblock.  This is "
+                             "ambiguous so we'll do the safe thing and "
+                             "look for another key.  Intervention is "
+                             "required to correct this.")
+                    inkey = False
+                else:
+                    key = ""
+                    lcount = 0
+                    inkey = True
+                    continue
             if not inkey:
                 continue
             lcount += 1
@@ -309,28 +330,41 @@ class SecretKey(KeyUtils):
             elif line.startswith("-----End Mix Key-----"):
                 inkey = False
                 plainkey = self.decrypt(key.decode("base64"), iv)
-                if keyid == MD5.new(data=plainkey[2:258]).hexdigest():
+                if len(plainkey) != 712:
+                    log.warn("%s: Decrypted key is not 712 Bytes!",
+                                 len(plainkey))
+                elif keyid == MD5.new(data=plainkey[2:258]).hexdigest():
                     keyobj = self.sec_construct(plainkey)
+                    log.debug("Cached valid secret key: %s" % keyid)
                     # The cache contains three objects: The key, the expiration
                     # date of the key and the grace period beyond expiration.
                     self.cache[keyid] = (keyobj, expires,
                                          self.date_grace(expires))
+                else:
+                    log.warn("Read a Secret key but the stated KeyID (%s)"
+                             "doesn't match the key digest.  The only "
+                             "safe action is to ignore this key.  "
+                             "Intervention is required to resolve this.",
+                             keyid)
                 continue
             else:
                 key += line
+        # This timestamp is used to ensure we don't repeatedly attempt to
+        # cache a key that doesn't exist.
+        self.last_cache = timing.last_midnight()
+        log.debug("Cache written on %s.  Cache will not be rewritten today "
+                  "unless a restart occurs.",
+                  timing.datestamp(self.last_cache))
         f.close()
 
     def decrypt(self, keybin, iv):
         # Hash a textual password and then use that hash, along with the
         # extracted IV, as the key for 3DES decryption.
-        password = "Two Humped Dromadary"
+        password = config.get('general', 'passphrase')
         pwhash = MD5.new(data=password).digest()
         des = DES3.new(pwhash, DES3.MODE_CBC, IV=iv)
         decrypted_key = des.decrypt(keybin)
         # The decrypted key should always be 712 Bytes
-        if len(decrypted_key) != 712:
-            print "%s: secring: Decrypted key is incorrect length!" % len(decrypted_key)
-            sys.exit(1)
         return decrypted_key
 
 
@@ -338,13 +372,14 @@ class PubkeyError(Exception):
     pass
 
 
-class PublicKey(KeyUtils):
+class Pubring(KeyUtils):
     def __init__(self):
         pubring = config.get('keys', 'pubring')
         if not os.path.isfile(pubring):
             raise PubkeyError("%s: Pubring not found" % pubring)
         self.pubring = pubring
         self.cache = {}
+        self.headers = []
 
     def __setitem__(self, name, headtup):
         assert len(headtup) == 3
@@ -375,6 +410,11 @@ class PublicKey(KeyUtils):
         # after validation has happened.
         return self.cache[name][0:5]
 
+    def get_headers(self):
+        if len(self.headers) == 0:
+            self.read_pubring()
+        return self.headers
+
     def pub_construct(self, key):
         length = struct.unpack("<H", key[0:2])[0]
         pub = (Crypto.Util.number.bytes_to_long(key[2:130]),
@@ -399,6 +439,7 @@ class PublicKey(KeyUtils):
         """For a given remailer shortname, try and find an email address and a
         valid key.  If no valid key is found, return None instead of the key.
         """
+        self.headers = []
         f = open(self.pubring, 'r')
         # Bool to indicate when an actual key is being read.  Set True by
         # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
@@ -425,6 +466,7 @@ class PublicKey(KeyUtils):
                         not self.date_expired(header[6])):
                         # Key is within validity period
                         gothead = True
+                        self.headers.append(line.rstrip())
             elif (gothead and not inkey and
                 line.startswith("-----Begin Mix Key-----")):
                 inkey = True
@@ -481,8 +523,12 @@ class PubCache():
         return self.cache[name][0:5]
 
 
-config = Config.Config().config
 if (__name__ == "__main__"):
+    log = logging.getLogger("Pymaster")
+    log.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    log.addHandler(handler)
+    log.info("Running Pymaster as %s", __name__)
     p = PublicKey()
     p.read_pubring()
     remailer = p['banana']

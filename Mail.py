@@ -20,14 +20,21 @@
 # You should have received a copy of the GNU General Public License along with
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys
 import os.path
 import mailbox
 import email
 import smtplib
+import logging
+from Crypto.Random import random
 from Crypto.Hash import MD5
-import Config
+from Config import config
+import timing
 import Utils
+import DecodePacket
+import KeyManager
+
+
+log = logging.getLogger("%s.Mail" % __name__)
 
 
 class MessageError(Exception):
@@ -36,13 +43,43 @@ class MessageError(Exception):
 
 class Mailbox():
     def __init__(self):
-        self.inbox = mailbox.Maildir(config.get('paths', 'maildir'),
-                                     factory=None, create=False)
+        self.pubring = KeyManager.Pubring()
+        self.mix_decode = DecodePacket.MixPayload()
+        maildir = config.get('paths', 'maildir')
+        self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
+        self.next_process = timing.future(mins=1)
+        self.interval = config.get('mail', 'interval')
+        log.debug("Initialised mailbox.  First process at %s",
+                  timing.timestamp(self.next_process))
+        log.debug("Using Maildir %s.", maildir)
+
+    def process(self):
+        if timing.now() < self.next_process:
+            return 0
+        for k in self.inbox.iterkeys():
+            try:
+                mixmes = self.read_message(k)
+            except MessageError, e:
+                log.debug("%s: Exception: %s", k, e)
+                continue
+            except DecodePacket.ValidationError, e:
+                log.debug("%s: Validation Error: %s", k, e)
+                continue
+            except DecodePacket.DummyMessage:
+                log.debug("%s: Deleted Dummy message.", k)
+                continue
+            self.delete(k)
+        self.next_process = timing.dhms_future(self.interval)
+
 
     def messages(self):
-        # Iterate over each message in the inbox.  This loop effectively
-        # envelops all processing.
         return self.inbox.iterkeys()
+
+    def delete(self, key):
+        # Using remove() instead of discard() so an exception occurs if a key
+        # doesn't exist.  Nothing external should modify the Mailbox.
+        self.inbox.remove(key)
+        log.debug("%s: Deleted message from maildir", key)
 
     def read_message(self, key):
         """-----BEGIN REMAILER MESSAGE-----
@@ -67,7 +104,11 @@ class Mailbox():
             elif line == "\n":
                 if (subject == 'remailer-key' and
                     msgfrom is not None):
-                    send_remailer_key(msgfrom)
+                    self.send_remailer_key(msgfrom)
+                    break
+                if (subject == 'remailer-conf' and
+                    msgfrom is not None):
+                    self.send_remailer_conf(msgfrom)
                     break
                 inhead = False
             elif inhead:
@@ -107,46 +148,183 @@ class Mailbox():
                 raise MessageError("Incorrect packet Length")
             if digest != MD5.new(data=packet).digest():
                 raise MessageError("Mixmaster message digest failed")
-            self.header = packet[0:512]
-            self.headers = packet[512:10240]
-            self.body = packet[10240:]
-        return mixmes
+            mix_payload = {'header': packet[0:512],
+                           'headers': packet[512:10240],
+                           'body': packet[10240:]}
+            self.mix_decode.unpack(mix_payload)
+
+    def send_remailer_key(self, recipient):
+        smtp = smtplib.SMTP(config.get('mail', 'server'))
+        payload = '%s\n\n' % Utils.capstring()
+        payload += 'Here is the Mixmaster key:\n\n'
+        payload += '=-=-=-=-=-=-=-=-=-=-=-=\n'
+        f = open(config.get('keys', 'pubkey'), 'r')
+        payload += f.read()
+        f.close()
+        msg = email.message_from_string(payload)
+        msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                                   config.get('mail', 'address'))
+        msg["Subject"] = "Remailer key for %s" % config.get('general',
+                                                            'shortname')
+        msg["Message-ID"] = Utils.msgid()
+        msg['Date'] = email.utils.formatdate()
+        msg['To'] = recipient
+        smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        logging.debug("Sent remailer-key to %s" % recipient)
+
+    def send_remailer_conf(self, recipient):
+        smtp = smtplib.SMTP(config.get('mail', 'server'))
+        payload = "Remailer-Type: %s\n" % config.get('general', 'version')
+        payload += "Supported format: Mixmaster\n"
+        payload += "Pool size: %s\n" % config.get('pool', 'size')
+        payload += ("Maximum message size: %s kB\n"
+                    % config.get('general', 'klen'))
+        payload += "In addition to other remailers, this remailer also sends "
+        payload += "mail to these\n addresses directly:\n"
+        #TODO SUpported direct delivery addresses
+        payload += "The following header lines will be filtered:\n"
+        #TODO Filtered headers
+        payload += "The following domains are blocked:\n"
+        #TODO Dest Blocks
+        payload += '%s\n\n' % Utils.capstring()
+        payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
+        for h in self.pubring.get_headers():
+            payload += h + "\n"
+        msg = email.message_from_string(payload)
+        msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                                   config.get('mail', 'address'))
+        msg["Subject"] = ("Capabilities of the %s remailer"
+                          % config.get('general', 'shortname'))
+        msg["Message-ID"] = Utils.msgid()
+        msg['Date'] = email.utils.formatdate()
+        msg['To'] = recipient
+        smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        logging.debug("Sent remailer-conf to %s" % recipient)
 
 
-def poolsend(filename):
-    fq = os.path.join(config.get('paths', 'pool'), filename)
-    f = open(fq, 'r')
-    msg = email.message_from_file(f)
-    f.close()
-    msg['From'] = config.get('mail', 'address')
-    msg['Date'] = email.utils.formatdate()
-    #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
-    print msg.as_string()
+class Sender():
+    def __init__(self):
+        self.destalw = ConfFiles(config.get('etc', 'dest_alw'), 'dest_alw')
+        self.destblk = ConfFiles(config.get('etc', 'dest_blk'), 'dest_blk')
+        smtp = smtplib.SMTP(config.get('mail', 'server'))
+        self.smtp = smtplib.SMTP(config.get('mail', 'server'))
 
-def send_remailer_key(recipient):
-    #smtp = smtplib.SMTP(config.get('mail', 'server'))
-    payload = '%s\n\n' % Utils.capstring()
-    payload += 'Here is the Mixmaster key:\n\n'
-    payload += '=-=-=-=-=-=-=-=-=-=-=-=\n'
-    f = open(config.get('keys', 'pubkey'), 'r')
-    payload += f.read()
-    f.close()
-    msg = email.message_from_string(payload)
-    msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
-                               config.get('mail', 'address'))
-    msg["Subject"] = "Remailer key for %s" % config.get('general',
-                                                        'shortname')
-    msg['Date'] = email.utils.formatdate()
-    msg['To'] = recipient
-    #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+    def sendmail(msg):
+        print msg['From']
+        #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
 
-config = Config.Config().config
+
+class Pool():
+    def __init__(self):
+        self.email = Sender()
+        self.next_process = timing.future(mins=1)
+        self.interval = config.get('pool', 'interval')
+        log.debug("Initialised pool.  First process at %s",
+                  timing.timestamp(self.next_process))
+
+    def pick_files(self):
+        """Pick a random subset of filenames in the Pool and return them as a
+        list.  If the Pool isn't sufficiently large, return an empty list.
+        """
+        pooldir = config.get('paths', 'pool')
+        poolfiles = os.listdir(pooldir)
+        poolsize = len(poolfiles)
+        log.debug("Pool contains %s messages", poolsize)
+        if poolsize < config.get('pool', 'size'):
+            # The pool is too small to send messages.
+            log.info("Pool is insufficiently populated to trigger sending.")
+            return []
+        process_num = (poolsize * config.getint('pool', 'rate')) / 100
+        log.debug("Attempting to send %s messages from the pool.", process_num)
+        assert process_num <= poolsize
+        # Shuffle the poolfiles into a random order
+        random.shuffle(poolfiles)
+        # Even though the list is shuffled, we'll pick a random point in the
+        # list to slice from/to.  It does no harm, might do some good and
+        # doesn't cost a lot!
+        startmax = poolsize - process_num
+        start = random.randint(0, startmax - 1)
+        end = start + process_num
+        return poolfiles[start:end]
+
+    def send(self):
+        """Send messages from the Mixmaster Pool.
+        """
+        if timing.now() < self.next_process:
+            return 0
+        log.info("Beginning Pool processing.")
+        # Set some static vars here so we don't repeatedly do it within the
+        # following loop.
+        poolpath = config.get('paths', 'pool')
+        date = email.utils.formatdate()
+        fromname = config.get('mail', 'address')
+        for fn in self.pick_files():
+            fq = os.path.join(poolpath, fn)
+            f = open(fq, 'r')
+            msg = email.message_from_file(f)
+            f.close()
+            msg['From'] = fromname
+            msg['Date'] = date
+            log.debug("Sending email to %s", msg['To'])
+            try:
+                self.email(msg)
+                send_success = True
+            except:
+                send_success = False
+            if send_success:
+                log.debug("Deleting %s from pool", fn)
+                os.remove(fq)
+        # Return the time for the next pool processing.
+        self.next_process = timing.dhms_future(self.interval)
+        log.debug("Next pool process at %s",
+                  timing.timestamp(self.next_process))
+
+
+class ConfFiles():
+    def __init__(self, filename, name):
+        # mtime is set to the Modified date on the file in "since Epoch"
+        # format.  Setting it to zero ensures the file is read on the first
+        # pass.
+        logname = "Pymaster.%s.%s" % (__name__, name)
+        self.log = logging.getLogger(logname)
+        mtime = 0
+        self.mtime = mtime
+        self.filename = filename
+
+    def hit(self, testdata):
+        if not os.path.isfile(self.filename):
+            return False
+        file_modified = os.path.getmtime(self.filename)
+        if file_modified > self.mtime:
+            (self.regex_rules,
+             self.list_rules) = Utils.file2regex(self.filename)
+            self.mtime = file_modified
+        if testdata in self.list_rules:
+            self.log.debug("Message matches: %s", testdata)
+            return True
+        if self.regex_rules:
+            regex_test = self.regex_rules.search(testdata)
+            if regex_test:
+                self.log.debug("Message matches Regular Expression: %s",
+                               regex_test.group(0))
+                return True
+        return False
+
 if (__name__ == "__main__"):
+    logfmt = config.get('logging', 'format')
+    datefmt = config.get('logging', 'datefmt')
+    log = logging.getLogger("Pymaster")
+    log.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
+    log.addHandler(handler)
+
     m = Mailbox()
-    #for msg in m.messages():
-    #    try:
-    #        m.read_message(msg)
-    #    except MessageError, e:
-    #        pass
-            #print "Exception: %s" % e
-    poolsend('m4c9aec5dd1886501')
+    p = Pool()
+    sleep = config.getint('general', 'interval')
+    while True:
+        m.process()
+        p.send()
+        log.info("Sleeping until %s",
+                 timing.timestamp(timing.future(secs=sleep)))
+        timing.sleep(sleep)
