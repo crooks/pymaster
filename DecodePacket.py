@@ -31,7 +31,9 @@ from Crypto.Hash import MD5
 from Crypto.PublicKey import RSA
 import Crypto.Random
 from Config import config
+import EncodePacket
 import KeyManager
+import Chain
 import Utils
 
 
@@ -41,6 +43,7 @@ class ValidationError(Exception):
 
 class DummyMessage(Exception):
     pass
+
 
 class DestinationError(Exception):
     """Raised when a Middleman remailer doesn't explicitly accept a stated
@@ -58,12 +61,16 @@ class MixPacket():
     def set_dhead(self, dhead):
         self.dhead = dhead
 
+    def set_dbody(self, dbody):
+        self.dbody = dbody
+
 
 class Mixmaster():
     def __init__(self):
         self.destalw = ConfFiles(config.get('etc', 'dest_alw'), 'dest_alw')
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'), 'dest_blk')
         self.middleman = config.getboolean('general', 'middleman')
+        self.randhop = EncodePacket.RandHop()
 
     def process(self, packet):
         self.msg = email.message.Message()
@@ -72,7 +79,9 @@ class Mixmaster():
         try:
             self.unpack(packet)
         except DestinationError:
-            log.info("Need to randhop this message")
+            self.msg = self.randhop.randhop(packet)
+            print self.msg.as_string()
+            sys.exit(0)
         return self.msg
 
     def packet_decrypt(self, packet):
@@ -170,30 +179,32 @@ class Mixmaster():
                User data section              [ up to ~2.5 MB]
             """
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
-            body = desobj.decrypt(packet.encbody)
+            packet.set_dbody(desobj.decrypt(packet.encbody))
             sbyte = 0
             ebyte = 5
-            length, dfields = struct.unpack('<IB', body[sbyte:ebyte])
+            length, dfields = struct.unpack('<IB', packet.dbody[sbyte:ebyte])
             dest_struct = "80s" * dfields
             sbyte = ebyte
             ebyte = sbyte + (80 * dfields)
-            destlist = list(struct.unpack(dest_struct, body[sbyte:ebyte]))
+            destlist = list(struct.unpack(dest_struct,
+                            packet.dbody[sbyte:ebyte]))
             if destlist[0].startswith("null:"):
                 raise DummyMessage("Dummy message")
             dests = self.dest_allow(destlist)
             if len(dests) == 0:
                 raise ValidationError("No acceptable destinations for this message")
             desthead = ','.join(dests)
+            self.msg.add_header("To", desthead)
             # At this point we have established a list of acceptable
             # email destinations.
-            self.msg.add_header("To", desthead)
             sbyte = ebyte
             ebyte = sbyte + 1
-            hfields = struct.unpack('B', body[sbyte])[0]
+            hfields = struct.unpack('B', packet.dbody[sbyte])[0]
             head_struct = "80s" * hfields
             sbyte = ebyte
             ebyte = sbyte + 80 * hfields
-            headlist = list(struct.unpack(head_struct, body[sbyte:ebyte]))
+            headlist = list(struct.unpack(head_struct,
+                                          packet.dbody[sbyte:ebyte]))
             heads = self.unpad(headlist)
             for h in heads:
                 head, content = h.split(": ", 1)
@@ -203,7 +214,7 @@ class Mixmaster():
             # The length of the message is prepended by the 4 Byte length,
             # hence why we need to add 4 to ebyte.
             ebyte = length + 4
-            self.msg.set_payload(body[sbyte:ebyte])
+            self.msg.set_payload(packet.dbody[sbyte:ebyte])
         elif packet_type == 2:
             """Packet type 2 (final hop, partial message):
                Chunk number                   [  1 byte ]
@@ -233,18 +244,11 @@ class Mixmaster():
         if checksum != msgdigest:
             raise ValidationError("Encrypted header failed checksum")
 
-    """This step only needs to be performed for Exit messages.  At all other
-    times, the message Body is wrapped in layers of encryption.
-
-        Length                         [       4 bytes]
-        Number of destination fields   [        1 byte]
-        Destination fields             [ 80 bytes each]
-        Number of header line fields   [        1 byte]
-        Header lines fields            [ 80 bytes each]
-        User data section              [ up to ~2.5 MB]
-    """
-
     def validate(self, packet, sbyte):
+        """Encrypted headers are of varying length depending on type (Exit,
+        Intermediate or Chunk).  This function validates the timestamp and
+        digest on these types based on the provided sbyte index.
+        """
         ebyte = sbyte + 5
         timehead = struct.unpack("5s", packet.dhead[sbyte:ebyte])[0]
         if timehead != "0000\x00":
@@ -262,6 +266,7 @@ class Mixmaster():
             raise ValidationError("Encrypted header failed checksum")
 
     def unpad(self, padded):
+        """Strip trailing Hex 00 from all the elements of a list."""
         assert type(padded) == list
         for e in range(len(padded)):
             padded[e] = padded[e].rstrip("\x00")
@@ -322,6 +327,7 @@ class Mixmaster():
                 alw_dests.append(d)
         return alw_dests
 
+
 class ConfFiles():
     def __init__(self, filename, name):
         # mtime is set to the Modified date on the file in "since Epoch"
@@ -353,6 +359,8 @@ class ConfFiles():
 
 log = logging.getLogger("Pymaster.DecodePacket")
 secret_key = KeyManager.SecretKey()
+pubring = KeyManager.Pubring()
+chain = Chain.Chain()
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -362,5 +370,7 @@ if (__name__ == "__main__"):
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
-    pool = Pool()
-    pool.process()
+    #pool = Pool()
+    #pool.process()
+    print hop
+    print pubring[hop]

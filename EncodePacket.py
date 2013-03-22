@@ -29,6 +29,9 @@ from Crypto.PublicKey import RSA
 import Crypto.Random
 from Config import config
 import timing
+import Chain
+import email
+import KeyManager
 
 
 log = logging.getLogger("Pymaster.EncodePacket")
@@ -148,11 +151,11 @@ class Body():
         return headstr
 
 class RandHop():
-    def __init__(self, msgobj):
-        self.exitnode()
-        self.mix_format(msgobj)
+    def __init__(self):
+        self.chain = Chain.Chain()
+        self.pubring = KeyManager.Pubring()
 
-    def mix_format(self, msgobj):
+    def randhop(self, packet):
         rem_data = self.exitnode()
         self.header = OuterHeader(rem_data, 1)
         payload = (self.header.outer_header +
@@ -161,11 +164,11 @@ class RandHop():
         desobj = DES3.new(self.header.inner_header.des3key,
                           DES3.MODE_CBC,
                           IV=self.header.inner_header.info.iv)
-        body = Body(msgobj)
-        payload += desobj.encrypt(body.payload)
-        del msgobj['To']
+        payload += desobj.encrypt(packet.dhead)
+        msgobj = email.message.Message()
         msgobj.add_header('To', rem_data[0])
         msgobj.set_payload(self.mixprep(payload))
+        return msgobj
         
     def exitnode(self):
         # pubring[0]    Email Address
@@ -173,8 +176,8 @@ class RandHop():
         # pubring[2]    Version
         # pubring[3]    Capabilities
         # pubring[4]    Pycrypto Key Object
-        name = chain.randexit()
-        rem_data = pubring[name]
+        name = self.chain.randexit()
+        rem_data = self.pubring[name]
         return rem_data
 
     def mixprep(self, binary):
@@ -204,16 +207,12 @@ if (__name__ == "__main__"):
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
-    import email
-    import KeyManager
-    import Chain
-    pubring = KeyManager.Pubring()
-    chain = Chain.Chain()
     #rem_name = "banana"
     #rem_data = pubring[rem_name]
     #header = OuterHeader(rem_data, 1)
     f = open('/opt/steve/pymaster/testmsg.txt', 'r')
     msg = email.message_from_file(f)
     f.close()
-    randhop = RandHop(msg)
+    randhop = RandHop()
+    msg = randhop.randhop(msg)
     print msg.as_string()
