@@ -45,6 +45,12 @@ def daydelta(dateobj, days):
     return dateobj + datetime.timedelta(days=days)
 
 
+def epoch_days():
+    """Return the number of days since Epoch (1st Jan 1970).
+    """
+    return int(time.time() / 86400)
+
+
 def timestamp(stamp):
     return stamp.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -93,8 +99,4 @@ def sleep(n):
     time.sleep(n)
 
 if (__name__ == "__main__"):
-    print timestamp(future(hours=1))
-    print nowstamp()
-    print last_midnight()
-    print next_midnight()
-    print timestamp(dhms_future("15m"))
+    print epoch_days()

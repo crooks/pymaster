@@ -165,5 +165,14 @@ class Chain():
         return chainlist
 
 
-c = Chain()
-print c.chain("*, austria, *, *, *")
+if (__name__ == "__main__"):
+    logfmt = config.get('logging', 'format')
+    datefmt = config.get('logging', 'datefmt')
+    log = logging.getLogger("Pymaster")
+    log.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
+    log.addHandler(handler)
+
+    c = Chain()
+    print c.chain("*, austria, *, *, *")

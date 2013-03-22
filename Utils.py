@@ -40,7 +40,7 @@ def capstring():
     caps += '\";'
     return caps
 
-def poolfn(prefix):
+def pool_filename(prefix):
     """Make up a suitably random filename for the pool entry.
     """
     while True:

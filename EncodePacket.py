@@ -96,11 +96,6 @@ class OuterHeader():
         self.make_outer(msg_type)
 
     def make_outer(self, msg_type):
-        # pubring[0]    Email Address
-        # pubring[1]    Key ID (Hex encoded)
-        # pubring[2]    Version
-        # pubring[3]    Capabilities
-        # pubring[4]    Pycrypto Key Object
         keyid = self.rem_data[1].decode('hex')
         des3key = Crypto.Random.get_random_bytes(24)
         pkcs1 = PKCS1_v1_5.new(self.rem_data[4])
@@ -122,33 +117,74 @@ class OuterHeader():
         self.outer_header = outer_header
 
 
+class Body():
+    def __init__(self, msgobj):
+        plain = msgobj.get_payload()
+        length = len(plain)
+        payload = struct.pack('<L', length)
+        payload += self.encode_header(msgobj['To'])
+        #TODO Somehow the above process needs to be repeated for header lines.
+        payload += plain
+        payload += Crypto.Random.get_random_bytes(10240 - len(payload))
+        assert len(payload) == 10240
+        self.payload = payload
+
+    def encode_header(self, header):
+        """This function takes a standard comma-separated header, such as the
+        To: header and converts it into the format required by Mixmaster,
+        which is:
+        Number of destination fields   [        1 byte]
+        Destination fields             [ 80 bytes each]
+        Number of header line fields   [        1 byte]
+        Header lines fields            [ 80 bytes each]
+        """
+        fields = header.split(',')
+        # The return string begins with the single-Byte count of the fields.
+        headstr = struct.pack('B', len(fields))
+        for field in fields:
+            field = field.strip()
+            padlen = 80 - len(field)
+            headstr += field + ("\x00" * padlen)
+        return headstr
+
 class RandHop():
     def __init__(self, msgobj):
-        self.plain = msgobj.get_payload()
         self.exitnode()
-        self.mix_format()
+        self.mix_format(msgobj)
 
-    def mix_format(self):
-        length = len(self.plain)
-        newmsg = struct.pack('<L', length)
-        newmsg += self.plain
-        newmsg += Crypto.Random.get_random_bytes(10236 - length)
+    def mix_format(self, msgobj):
         rem_data = self.exitnode()
         self.header = OuterHeader(rem_data, 1)
+        payload = (self.header.outer_header +
+                   Crypto.Random.get_random_bytes(9728))
+        assert len(payload) == 10240
         desobj = DES3.new(self.header.inner_header.des3key,
                           DES3.MODE_CBC,
                           IV=self.header.inner_header.info.iv)
-        head = self.header.outer_header + Crypto.Random.get_random_bytes(9728)
-        body = desobj.encrypt(newmsg)
-        assert len(head) == 10240
-        assert len(body) == 10240
-        self.message = head + body
+        body = Body(msgobj)
+        payload += desobj.encrypt(body.payload)
+        msgobj['To'] = rem_data[0]
+        msgobj.set_payload(self.wrap(payload.encode('base64'), 40))
         
-
     def exitnode(self):
+        # pubring[0]    Email Address
+        # pubring[1]    Key ID (Hex encoded)
+        # pubring[2]    Version
+        # pubring[3]    Capabilities
+        # pubring[4]    Pycrypto Key Object
         name = chain.randexit()
         rem_data = pubring[name]
         return rem_data
+
+    def wrap(self, s, n):
+        """Take a string and wrap it to lines of length n.
+        """
+        s = ''.join(s.split("\n"))
+        multiline = ""
+        while len(s) > 0:
+            multiline += s[:n] + "\n"
+            s = s[n:]
+        return multiline.rstrip()
 
 
 if (__name__ == "__main__"):
@@ -172,3 +208,4 @@ if (__name__ == "__main__"):
     msg = email.message_from_file(f)
     f.close()
     randhop = RandHop(msg)
+    print msg.as_string()

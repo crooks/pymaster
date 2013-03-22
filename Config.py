@@ -61,6 +61,7 @@ config.set('general', 'middleman', 0)
 config.set('general', 'klen', 128)
 config.set('general', 'interval', 60)
 config.set('general', 'passphrase', 'A badly configured server')
+config.set('general', 'block_first', 1)
 
 config.add_section('logging')
 config.set('logging', 'level', 'debug')

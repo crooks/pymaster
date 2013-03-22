@@ -380,6 +380,7 @@ class Pubring(KeyUtils):
         self.pubring = pubring
         self.cache = {}
         self.headers = []
+        self.remailer_addresses = []
 
     def __setitem__(self, name, headtup):
         assert len(headtup) == 3
@@ -415,6 +416,11 @@ class Pubring(KeyUtils):
             self.read_pubring()
         return self.headers
 
+    def get_addresses(self):
+        if len(self.remailer_addresses) == 0:
+            self.read_pubring()
+        return self.remailer_addresses
+
     def pub_construct(self, key):
         length = struct.unpack("<H", key[0:2])[0]
         pub = (Crypto.Util.number.bytes_to_long(key[2:130]),
@@ -449,7 +455,10 @@ class Pubring(KeyUtils):
         gothead = False
         for line in f:
             if not gothead and not inkey:
-                header = line.rstrip().split(" ")
+                # headline is a textual representation of the Pubkey header.
+                # header is a list of headline's components
+                headline = line.rstrip()
+                header = headline.split(" ")
                 # Standard headers are:-
                 # header[0] Short Name
                 # header[1] Email Address
@@ -466,7 +475,6 @@ class Pubring(KeyUtils):
                         not self.date_expired(header[6])):
                         # Key is within validity period
                         gothead = True
-                        self.headers.append(line.rstrip())
             elif (gothead and not inkey and
                 line.startswith("-----Begin Mix Key-----")):
                 inkey = True
@@ -479,6 +487,8 @@ class Pubring(KeyUtils):
                     keyid == MD5.new(data=key[2:258]).hexdigest() and
                     keyid == header[2]):
                     # We want this key please!
+                    self.headers.append(headline)
+                    self.remailer_addresses.append(header[1])
                     name = header.pop(0)
                     header.insert(4, self.pub_construct(key))
                     self.cache[name] = tuple(header)

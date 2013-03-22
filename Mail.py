@@ -31,10 +31,8 @@ from Config import config
 import timing
 import Utils
 import DecodePacket
+import EncodePacket
 import KeyManager
-
-
-log = logging.getLogger("%s.Mail" % __name__)
 
 
 class MessageError(Exception):
@@ -43,7 +41,6 @@ class MessageError(Exception):
 
 class Mailbox():
     def __init__(self):
-        self.pubring = KeyManager.Pubring()
         self.mix_decode = DecodePacket.MixPayload()
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
@@ -58,19 +55,15 @@ class Mailbox():
             return 0
         for k in self.inbox.iterkeys():
             try:
-                mixmes = self.read_message(k)
+                self.read_message(k)
             except MessageError, e:
                 log.debug("%s: Exception: %s", k, e)
-                continue
             except DecodePacket.ValidationError, e:
                 log.debug("%s: Validation Error: %s", k, e)
-                continue
             except DecodePacket.DummyMessage:
                 log.debug("%s: Deleted Dummy message.", k)
-                continue
             self.delete(k)
         self.next_process = timing.dhms_future(self.interval)
-
 
     def messages(self):
         return self.inbox.iterkeys()
@@ -188,7 +181,7 @@ class Mailbox():
         #TODO Dest Blocks
         payload += '%s\n\n' % Utils.capstring()
         payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
-        for h in self.pubring.get_headers():
+        for h in pubring.get_headers():
             payload += h + "\n"
         msg = email.message_from_string(payload)
         msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
@@ -206,12 +199,78 @@ class Sender():
     def __init__(self):
         self.destalw = ConfFiles(config.get('etc', 'dest_alw'), 'dest_alw')
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'), 'dest_blk')
+        self.desthdrs = ['To', 'Cc', 'Bcc']
+        self.middleman = config.getboolean('general', 'middleman')
         smtp = smtplib.SMTP(config.get('mail', 'server'))
         self.smtp = smtplib.SMTP(config.get('mail', 'server'))
 
-    def sendmail(msg):
+    def sendmail(self, msg):
         print msg['From']
-        #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        block = self.validate(msg)
+        assert block >= 0 and block <= 2
+        if block == 0:
+            log.debug("Message passed destination validation.  Sending "
+                      "directly.")
+            return True
+            #smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        elif block == 1:
+            log.debug("Destination is not allowed.  Rejecting message.")
+            return True
+        elif block == 2:
+            log.debug("Message needs to be randhopped to another remailer.")
+            #TODO Need to randhop this message.  Once that functionality is
+            # sorted, this can return True so such messages are deleted.
+            return False
+
+    def validate(self, msg):
+        """Validation must return three states.  Allowed, Blocked or Randhop.
+           0    Allowed (The message will be delivered directly)
+           1    Blocked (The message is rejected and deleted)
+           2    Randhop (Try to pass the message to another remailer)
+        """
+        if msg['To'] in pubring.get_addresses():
+            log.debug("Destination is another remailer. Allow it")
+            if 'Cc' in msg:
+                log.warn("Messages to other remailers shouldn't contain Cc "
+                         "headers. Deleting header.")
+                del msg['Cc']
+            if 'Bcc' in msg:
+                log.warn("Messages to other remailers shouldn't contain Bcc "
+                         "headers. Deleting header.")
+                del msg['Bcc']
+            return 0
+        alw_hit = False
+        blk_hit = False
+        for h in self.desthdrs:
+            if h in msg:
+                if self.destalw.hit(msg[h]):
+                    alw_hit = True
+                if self.destblk.hit(msg[h]):
+                    blk_hit = True
+        if alw_hit and not blk_hit:
+            return 0
+        elif blk_hit and not alw_hit:
+            return 1
+        elif blk_hit and alw_hit:
+            # Both allow and block hits mean a decision has to be made on
+            # which has priority.  If block_first is True then allow is the
+            # second (most significant) check.  If it's False, block is more
+            # significant and the destinaion is not allowed.
+            if config.getboolean('general', 'block_first'):
+                return 0
+            else:
+                return 1
+        else:
+            # This is the most common result.  The destination isn't
+            # explicitly allowed or denied.
+            if self.middleman:
+                # This is a Middleman and the stated destination isn't
+                # whitelisted.  Needs to be randhopped.
+                return 2
+            else:
+                # This is an Exit Remailer.  By default we allow all email
+                # destinations that aren't explicitly blocked.
+                return 0
 
 
 class Pool():
@@ -265,12 +324,7 @@ class Pool():
             f.close()
             msg['From'] = fromname
             msg['Date'] = date
-            log.debug("Sending email to %s", msg['To'])
-            try:
-                self.email(msg)
-                send_success = True
-            except:
-                send_success = False
+            success = self.email.sendmail(msg)
             if send_success:
                 log.debug("Deleting %s from pool", fn)
                 os.remove(fq)
@@ -310,6 +364,7 @@ class ConfFiles():
                 return True
         return False
 
+pubring = KeyManager.Pubring()
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -328,3 +383,5 @@ if (__name__ == "__main__"):
         log.info("Sleeping until %s",
                  timing.timestamp(timing.future(secs=sleep)))
         timing.sleep(sleep)
+else:
+    log = logging.getLogger("%s.Mail" % __name__)
