@@ -163,8 +163,9 @@ class RandHop():
                           IV=self.header.inner_header.info.iv)
         body = Body(msgobj)
         payload += desobj.encrypt(body.payload)
-        msgobj['To'] = rem_data[0]
-        msgobj.set_payload(self.wrap(payload.encode('base64'), 40))
+        del msgobj['To']
+        msgobj.add_header('To', rem_data[0])
+        msgobj.set_payload(self.mixprep(payload))
         
     def exitnode(self):
         # pubring[0]    Email Address
@@ -176,15 +177,22 @@ class RandHop():
         rem_data = pubring[name]
         return rem_data
 
-    def wrap(self, s, n):
-        """Take a string and wrap it to lines of length n.
+    def mixprep(self, binary):
+        """Take a binary string, encode it as Base64 and wrap it to lines of
+           length n.
         """
+        # This is the wrap width for Mixmaster Base64
+        n = 40
+        s = binary.encode("base64")
         s = ''.join(s.split("\n"))
-        multiline = ""
+        payload = "::\n"
+        payload += "Remailer-Type: %s\n\n" % config.get('general', 'version')
+        payload += "-----BEGIN REMAILER MESSAGE-----\n"
         while len(s) > 0:
-            multiline += s[:n] + "\n"
+            payload += s[:n] + "\n"
             s = s[n:]
-        return multiline.rstrip()
+        payload += "-----END REMAILER MESSAGE-----\n"
+        return payload
 
 
 if (__name__ == "__main__"):
