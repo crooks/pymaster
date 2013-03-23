@@ -25,11 +25,14 @@ import os.path
 import logging
 import mailbox
 import email
+import smtplib
 import struct
 from Crypto.Hash import MD5
 from Config import config
 from Crypto.Random import random
+import timing
 import DecodePacket
+import KeyManager
 import Utils
 
 
@@ -64,12 +67,84 @@ class MailMessage():
         mailfile.close()
         if msg.is_multipart():
             raise MailError("Message is multipart")
-        if msg.has_key('Subject'):
-            print msg['Subject']
-        self.extract_packet(msg)
-        f = open(Utils.pool_filename('m'), 'wb')
-        f.write(self.packet)
+        txtreply = self.remailer_foo(msg)
+        if txtreply:
+            log.debug("Responded to Remailer-Foo message")
+        else:
+            packet = self.extract_packet(msg)
+            f = open(Utils.pool_filename('m'), 'wb')
+            f.write(packet)
+            f.close()
+
+    def remailer_foo(self, inmsg):
+        if not 'Subject' in inmsg:
+            return False
+        sub = inmsg.get("Subject").lower().strip()
+        if 'Reply-To' in inmsg:
+            inmsg['From'] = inmsg['Reply-To']
+        elif not 'From' in inmsg:
+            # No Reply-To and no From.  We don't know where to send the
+            # remailer-foo message so no point in trying.
+            return False
+        #addy = inmsg.get_header('From')
+        addy = 'steve@mixmin.net'
+        if sub == 'remailer-key':
+            self.send_remailer_key(addy)
+        elif sub == 'remailer-conf':
+            self.send_remailer_conf(addy)
+        else:
+            log.debug("%s: No programmed response for this Subject",
+                      inmsg.get("Subject"))
+            return False
+        return True
+
+    def send_remailer_key(self, recipient):
+        smtp = smtplib.SMTP(config.get('mail', 'server'))
+        payload = '%s\n\n' % Utils.capstring()
+        payload += 'Here is the Mixmaster key:\n\n'
+        payload += '=-=-=-=-=-=-=-=-=-=-=-=\n'
+        f = open(config.get('keys', 'pubkey'), 'r')
+        payload += f.read()
         f.close()
+        msg = email.message_from_string(payload)
+        msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                                   config.get('mail', 'address'))
+        msg["Subject"] = "Remailer key for %s" % config.get('general',
+                                                            'shortname')
+        msg["Message-ID"] = Utils.msgid()
+        msg['Date'] = email.utils.formatdate()
+        msg['To'] = recipient
+        smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        log.debug("Sent remailer-key to %s" % recipient)
+
+    def send_remailer_conf(self, recipient):
+        smtp = smtplib.SMTP(config.get('mail', 'server'))
+        payload = "Remailer-Type: %s\n" % config.get('general', 'version')
+        payload += "Supported format: Mixmaster\n"
+        payload += "Pool size: %s\n" % config.get('pool', 'size')
+        payload += ("Maximum message size: %s kB\n"
+                    % config.get('general', 'klen'))
+        payload += "In addition to other remailers, this remailer also sends "
+        payload += "mail to these\n addresses directly:\n"
+        #TODO SUpported direct delivery addresses
+        payload += "The following header lines will be filtered:\n"
+        #TODO Filtered headers
+        payload += "The following domains are blocked:\n"
+        #TODO Dest Blocks
+        payload += '%s\n\n' % Utils.capstring()
+        payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
+        for h in pubring.get_headers():
+            payload += h + "\n"
+        msg = email.message_from_string(payload)
+        msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                                   config.get('mail', 'address'))
+        msg["Subject"] = ("Capabilities of the %s remailer"
+                          % config.get('general', 'shortname'))
+        msg["Message-ID"] = Utils.msgid()
+        msg['Date'] = email.utils.formatdate()
+        msg['To'] = recipient
+        smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        log.debug("Sent remailer-conf to %s" % recipient)
 
     def extract_packet(self, msgobj):
         """-----BEGIN REMAILER MESSAGE-----
@@ -92,17 +167,24 @@ class MailMessage():
         digest = mailmsg[begin + 2].decode("base64")
         packet = ''.join(mailmsg[begin + 3:end]).decode("base64")
         if len(packet) != length:
-            raise ValidationError("Incorrect packet length")
+            raise MailError("Incorrect packet length")
         if digest != MD5.new(data=packet).digest():
-            raise ValidationError("Mixmaster message digest failed")
-        self.packet = packet
+            raise MailError("Mixmaster message digest failed")
+        return packet
 
 
 class Pool():
     def __init__(self):
         self.m = DecodePacket.Mixmaster()
+        self.next_process = timing.future(mins=1)
+        self.interval = config.get('pool', 'interval')
+        log.debug("Initialised pool.  First process at %s",
+                  timing.timestamp(self.next_process))
 
     def process(self):
+        if timing.now() < self.next_process:
+            return 0
+        log.info("Beginning Pool processing.")
         for f in self.pick_files():
             log.debug("Processing file: %s", f)
             try:
@@ -118,7 +200,9 @@ class Pool():
             except DecodePacket.DummyMessage, e:
                 log.debug("%s: Dummy message", f)
                 continue
-    
+            msg.add_header("Message-ID", Utils.msgid())
+            msg.add_header("Date", email.Utils.formatdate())
+
     def read_file(self, filename):
         fq = os.path.join(config.get('paths', 'pool'), filename)
         f = open(fq, 'rb')
@@ -157,17 +241,22 @@ class Pool():
         end = start + process_num
         return poolfiles[start:end]
 
+pubring = KeyManager.Pubring()
 log = logging.getLogger("Pymaster.DecodePacket")
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
     log = logging.getLogger("Pymaster")
-    log.setLevel(logging.INFO)
+    log.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
-    #mail = MailMessage()
-    #mail.iterate_mailbox()
+    mail = MailMessage()
     pool = Pool()
-    pool.process()
+    sleep = config.getint('general', 'interval')
+    while True:
+        mail.iterate_mailbox()
+        pool.process()
+        log.debug("Sleeping for %s seconds", sleep)
+        timing.sleep(sleep)
