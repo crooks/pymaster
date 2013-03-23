@@ -25,6 +25,7 @@ def future(days=0, hours=0, mins=0, secs=0):
     return now() + datetime.timedelta(days=days, hours=hours,
                                       minutes=mins, seconds=secs)
 
+
 def dhms_future(timestr):
     """Take a string formatted as 00h and convert it to a time in the future.
     """
@@ -95,8 +96,10 @@ def next_midnight():
     """
     return last_midnight() + datetime.timedelta(days=1)
 
+
 def sleep(n):
     time.sleep(n)
+
 
 if (__name__ == "__main__"):
     print epoch_days()
