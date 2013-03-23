@@ -50,6 +50,7 @@ class MailMessage():
     def __init__(self):
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
+        self.smtp = smtplib.SMTP(config.get('mail', 'server'))
 
     def iterate_mailbox(self):
         log.info("Beginning mailbox processing")
@@ -99,7 +100,6 @@ class MailMessage():
         return True
 
     def send_remailer_key(self, recipient):
-        smtp = smtplib.SMTP(config.get('mail', 'server'))
         payload = '%s\n\n' % Utils.capstring()
         payload += 'Here is the Mixmaster key:\n\n'
         payload += '=-=-=-=-=-=-=-=-=-=-=-=\n'
@@ -114,11 +114,10 @@ class MailMessage():
         msg["Message-ID"] = Utils.msgid()
         msg['Date'] = email.utils.formatdate()
         msg['To'] = recipient
-        smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
         log.debug("Sent remailer-key to %s" % recipient)
 
     def send_remailer_conf(self, recipient):
-        smtp = smtplib.SMTP(config.get('mail', 'server'))
         payload = "Remailer-Type: %s\n" % config.get('general', 'version')
         payload += "Supported format: Mixmaster\n"
         payload += "Pool size: %s\n" % config.get('pool', 'size')
@@ -143,7 +142,7 @@ class MailMessage():
         msg["Message-ID"] = Utils.msgid()
         msg['Date'] = email.utils.formatdate()
         msg['To'] = recipient
-        smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+        self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
         log.debug("Sent remailer-conf to %s" % recipient)
 
     def extract_packet(self, msgobj):
@@ -178,8 +177,15 @@ class Pool():
         self.m = DecodePacket.Mixmaster()
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
-        log.debug("Initialised pool.  First process at %s",
+        self.rate = config.getint('pool', 'rate')
+        self.size = config.getint('pool', 'size')
+        self.pooldir = config.get('paths', 'pool')
+        log.info("Initialised pool. Path=%s, Interval=%s, Rate=%s%%, "
+                 "Size=%s.",
+                 self.pooldir, self.interval, self.rate, self.size)
+        log.debug("First pool process at %s",
                   timing.timestamp(self.next_process))
+        self.smtp = smtplib.SMTP(config.get('mail', 'server'))
 
     def process(self):
         if timing.now() < self.next_process:
@@ -190,18 +196,35 @@ class Pool():
             try:
                 mixobj = self.read_file(f)
             except PayloadError, e:
-                log.warn("%s: %s", f, e)
+                log.warn("%s: Payload Error: %s", f, e)
+                self.delete(f)
                 continue
             try:
                 msg = self.m.process(mixobj)
             except DecodePacket.ValidationError, e:
-                log.warn("%s: %s", f, e)
+                log.warn("%s: Validation Error: %s", f, e)
+                self.delete(f)
                 continue
             except DecodePacket.DummyMessage, e:
                 log.debug("%s: Dummy message", f)
+                self.delete(f)
                 continue
-            msg.add_header("Message-ID", Utils.msgid())
-            msg.add_header("Date", email.Utils.formatdate())
+            msg["Message-ID"] = Utils.msgid()
+            msg["Date"] = email.Utils.formatdate()
+            msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                                       config.get('mail', 'address'))
+            #self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+            self.delete(f)
+        # Return the time for the next pool processing.
+        self.next_process = timing.dhms_future(self.interval)
+        log.debug("Next pool process at %s",
+                  timing.timestamp(self.next_process))
+
+    def delete(self, f):
+        """Delete files from the Mixmaster Pool."""
+        fq = os.path.join(config.get('paths', 'pool'), f)
+        os.remove(fq)
+        log.debug("%s: Deleted from pool.", f)
 
     def read_file(self, filename):
         fq = os.path.join(config.get('paths', 'pool'), filename)
@@ -209,6 +232,8 @@ class Pool():
         packet = f.read()
         f.close()
         if len(packet) != 20480:
+            log.warn("Only correctly sized payloads should make it into the "
+                     "Pool.  Somehow this message slipped through.")
             raise PayloadError("Incorrect Mixmaster packet size")
         p = DecodePacket.MixPacket()
         fmt = '@' + ('512s' * 20)
@@ -220,15 +245,14 @@ class Pool():
         """Pick a random subset of filenames in the Pool and return them as a
         list.  If the Pool isn't sufficiently large, return an empty list.
         """
-        pooldir = config.get('paths', 'pool')
-        poolfiles = os.listdir(pooldir)
+        poolfiles = os.listdir(self.pooldir)
         poolsize = len(poolfiles)
         log.debug("Pool contains %s messages", poolsize)
-        if poolsize < config.get('pool', 'size'):
+        if poolsize < self.size:
             # The pool is too small to send messages.
             log.info("Pool is insufficiently populated to trigger sending.")
             return []
-        process_num = (poolsize * config.getint('pool', 'rate')) / 100
+        process_num = (poolsize * self.rate) / 100
         log.debug("Attempting to send %s messages from the pool.", process_num)
         assert process_num <= poolsize
         # Shuffle the poolfiles into a random order
@@ -237,12 +261,14 @@ class Pool():
         # list to slice from/to.  It does no harm, might do some good and
         # doesn't cost a lot!
         startmax = poolsize - process_num
+        if startmax <= 0:
+            return poolfiles
         start = random.randint(0, startmax - 1)
         end = start + process_num
         return poolfiles[start:end]
 
 pubring = KeyManager.Pubring()
-log = logging.getLogger("Pymaster.DecodePacket")
+log = logging.getLogger("Pymaster")
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
