@@ -80,8 +80,6 @@ class Mixmaster():
             self.unpack(packet)
         except DestinationError:
             self.msg = self.randhop.randhop(packet)
-            print self.msg.as_string()
-            sys.exit(0)
         return self.msg
 
     def packet_decrypt(self, packet):
@@ -143,9 +141,9 @@ class Mixmaster():
             # The payload string will be extended as each header has a layer of
             # encryption striped off.
             payload = ""
-            # Loop through two components of the message, in parallel. The IVs are
-            # extracted from the encrypted packet and the corresponding encrypted
-            # header has a layer of 3DES removed.
+            # Loop through two components of the message, in parallel. The IVs
+            # are extracted from the encrypted packet and the corresponding
+            # encrypted header has a layer of 3DES removed.
             assert len(ivs) == 19
             assert len(packet.headers) == 20
             for h in range(19):
@@ -153,11 +151,11 @@ class Mixmaster():
                 # sequence of IVs held in the packet information.
                 desobj = DES3.new(deskey, DES3.MODE_CBC, IV=ivs[h])
                 payload += desobj.decrypt(packet.headers[h + 1])
-            # At this point, the payload contains 19 headers so the length should
-            # be 19 * 512 Bytes.
+            # At this point, the payload contains 19 headers so the length
+            # should be 19 * 512 Bytes.
             assert len(payload) == 9728
-            # Add a fake 512 byte header to the bottom of the header stack. This
-            # replaces the first header that we removed.
+            # Add a fake 512 byte header to the bottom of the header stack.
+            # This replaces the first header that we removed.
             payload += Crypto.Random.get_random_bytes(512)
             assert len(payload) == 10240
             payload += desobj.decrypt(packet.encbody)
@@ -192,7 +190,8 @@ class Mixmaster():
                 raise DummyMessage("Dummy message")
             dests = self.dest_allow(destlist)
             if len(dests) == 0:
-                raise ValidationError("No acceptable destinations for this message")
+                raise ValidationError("No acceptable destinations for this "
+                                      "message")
             desthead = ','.join(dests)
             self.msg.add_header("To", desthead)
             # At this point we have established a list of acceptable
@@ -318,7 +317,7 @@ class Mixmaster():
             # Any blocked destination shouldn't reach this point.
             elif self.middleman and not alw:
                 # The dest is not explicitly allowed or denied.  As this is
-                # a Middleman, 
+                # a Middleman.
                 log.info("%s: Middleman doesn't allow this destination.", d)
                 raise DestinationError("Must randhop")
             else:
