@@ -40,6 +40,7 @@ log = logging.getLogger("Pymaster.EncodePacket")
 class ValidationError(Exception):
     pass
 
+
 class FinalHop():
     """Packet type 1 (final hop):
        Message ID                     [ 16 bytes]
@@ -48,7 +49,7 @@ class FinalHop():
     def __init__(self):
         self.messageid = Crypto.Random.get_random_bytes(16)
         self.iv = Crypto.Random.get_random_bytes(8)
-    
+
 
 class EncryptedHeader():
     def __init__(self, msg_type):
@@ -103,7 +104,7 @@ class OuterHeader():
         des3key = Crypto.Random.get_random_bytes(24)
         pkcs1 = PKCS1_v1_5.new(self.rem_data[4])
         rsakey = pkcs1.encrypt(des3key)
-        lenrsa =  len(rsakey)
+        lenrsa = len(rsakey)
         assert lenrsa == 128
         iv = Crypto.Random.get_random_bytes(8)
         inner = EncryptedHeader(msg_type)
@@ -150,6 +151,7 @@ class Body():
             headstr += field + ("\x00" * padlen)
         return headstr
 
+
 class RandHop():
     def __init__(self):
         self.chain = Chain.Chain()
@@ -164,12 +166,13 @@ class RandHop():
         desobj = DES3.new(self.header.inner_header.des3key,
                           DES3.MODE_CBC,
                           IV=self.header.inner_header.info.iv)
-        payload += desobj.encrypt(packet.dhead)
+        payload += desobj.encrypt(packet.dbody)
+        assert len(payload) == 20480
         msgobj = email.message.Message()
         msgobj.add_header('To', rem_data[0])
         msgobj.set_payload(self.mixprep(payload))
         return msgobj
-        
+
     def exitnode(self):
         # pubring[0]    Email Address
         # pubring[1]    Key ID (Hex encoded)
