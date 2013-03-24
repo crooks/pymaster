@@ -52,11 +52,11 @@ class MailMessage():
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
         self.server = config.get('mail', 'server')
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
-                  maildir, server)
+                  maildir, self.server)
 
     def iterate_mailbox(self):
         log.info("Beginning mailbox processing")
-        self.smtp = smtplib.SMTP(server)
+        self.smtp = smtplib.SMTP(self.server)
         for k in self.inbox.iterkeys():
             try:
                 self.mail2pool(k)
