@@ -141,4 +141,4 @@ if WRITE_DEFAULT_CONFIG:
         config.write(configfile)
 # Setting this last prevents it being overridden in the config file.
 # Hardly security but it doesn't really matter.
-config.set('general', 'version', 'pymaster-0.1a')
+config.set('general', 'version', '0.1a.pymaster')

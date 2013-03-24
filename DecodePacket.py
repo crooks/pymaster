@@ -69,6 +69,7 @@ class Mixmaster():
     def __init__(self):
         self.destalw = ConfFiles(config.get('etc', 'dest_alw'), 'dest_alw')
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'), 'dest_blk')
+        self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
         self.middleman = config.getboolean('general', 'middleman')
         self.randhop = EncodePacket.RandHop()
 
@@ -280,7 +281,7 @@ class Mixmaster():
         s = binary.encode("base64")
         s = ''.join(s.split("\n"))
         payload = "::\n"
-        payload += "Remailer-Type: %s\n\n" % config.get('general', 'version')
+        payload += "Remailer-Type: %s\n\n" % self.remailer_type
         payload += "-----BEGIN REMAILER MESSAGE-----\n"
         while len(s) > 0:
             payload += s[:n] + "\n"

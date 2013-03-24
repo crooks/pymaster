@@ -158,10 +158,8 @@ class RandHop():
         self.pubring = KeyManager.Pubring()
 
     def randhop(self, packet):
-        exitname = self.exitnode()
-        rem_data = exitname
+        rem_data = self.exitnode()
         self.header = OuterHeader(rem_data, 1)
-        log.debug("Attempting Randhop to: %s <%s>", exitname, rem_data[0])
         payload = (self.header.outer_header +
                    Crypto.Random.get_random_bytes(9728))
         assert len(payload) == 10240
@@ -183,6 +181,7 @@ class RandHop():
         # pubring[4]    Pycrypto Key Object
         name = self.chain.randexit()
         rem_data = self.pubring[name]
+        log.debug("Attempting Randhop to: %s <%s>", name, rem_data[0])
         return rem_data
 
     def mixprep(self, binary):
