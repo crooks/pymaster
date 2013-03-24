@@ -91,7 +91,7 @@ class MailMessage():
             # No Reply-To and no From.  We don't know where to send the
             # remailer-foo message so no point in trying.
             return False
-        addy = inmsg.get_header('From')
+        addy = inmsg['From']
         if sub == 'remailer-key':
             self.send_remailer_key(addy)
         elif sub == 'remailer-conf':
@@ -103,13 +103,14 @@ class MailMessage():
         return True
 
     def send_remailer_key(self, recipient):
+        msg = email.message.Message()
         payload = '%s\n\n' % Utils.capstring()
         payload += 'Here is the Mixmaster key:\n\n'
         payload += '=-=-=-=-=-=-=-=-=-=-=-=\n'
         f = open(config.get('keys', 'pubkey'), 'r')
         payload += f.read()
         f.close()
-        msg = email.message_from_string(payload)
+        msg.set_payload(payload)
         msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                    config.get('mail', 'address'))
         msg["Subject"] = "Remailer key for %s" % config.get('general',
@@ -121,6 +122,7 @@ class MailMessage():
         log.debug("Sent remailer-key to %s" % recipient)
 
     def send_remailer_conf(self, recipient):
+        msg = email.message.Message()
         payload = "Remailer-Type: %s\n" % config.get('general', 'version')
         payload += "Supported format: Mixmaster\n"
         payload += "Pool size: %s\n" % config.get('pool', 'size')
@@ -137,7 +139,7 @@ class MailMessage():
         payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
         for h in pubring.get_headers():
             payload += h + "\n"
-        msg = email.message_from_string(payload)
+        msg.set_payload(payload)
         msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                    config.get('mail', 'address'))
         msg["Subject"] = ("Capabilities of the %s remailer"
