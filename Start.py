@@ -91,8 +91,7 @@ class MailMessage():
             # No Reply-To and no From.  We don't know where to send the
             # remailer-foo message so no point in trying.
             return False
-        #addy = inmsg.get_header('From')
-        addy = 'steve@mixmin.net'
+        addy = inmsg.get_header('From')
         if sub == 'remailer-key':
             self.send_remailer_key(addy)
         elif sub == 'remailer-conf':
