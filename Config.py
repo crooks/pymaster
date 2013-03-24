@@ -133,6 +133,8 @@ config.add_section('etc')
 etcpath = makepath(basedir, 'etc', 'etc')
 makeopt('etc', 'dest_alw', os.path.join(etcpath, 'dest.alw'))
 makeopt('etc', 'dest_blk', os.path.join(etcpath, 'dest.blk'))
+makeopt('etc', 'helpfile', os.path.join(etcpath, 'help.txt'))
+makeopt('etc', 'adminkey', os.path.join(etcpath, 'adminkey.txt'))
 libpath = makepath(basedir, 'lib', 'lib')
 makeopt('general', 'idlog', os.path.join(libpath, 'idlog.db'))
 

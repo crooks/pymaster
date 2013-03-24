@@ -95,16 +95,27 @@ class MailMessage():
             return False
         addy = inmsg['From']
         if sub == 'remailer-key':
-            self.send_remailer_key(addy)
+            outmsg = self.send_remailer_key()
         elif sub == 'remailer-conf':
-            self.send_remailer_conf(addy)
+            outmsg = self.send_remailer_conf()
+        elif sub == 'remailer-help':
+            outmsg = self.send_remailer_help()
+        elif sub == 'remailer-adminkey':
+            outmsg = self.send_remailer_adminkey()
         else:
             log.debug("%s: No programmed response for this Subject",
                       inmsg.get("Subject"))
             return False
+        outmsg["From"] = "%s <%s>" % (config.get('general', 'longname'),
+                                      config.get('mail', 'address'))
+        outmsg["Message-ID"] = Utils.msgid()
+        outmsg['Date'] = email.utils.formatdate()
+        outmsg['To'] = addy
+        self.smtp.sendmail(msg["From"], msg["To"], outmsg.as_string())
+        log.debug("Sent %s to %s", outmsg['Subject'], outmsg['To'])
         return True
 
-    def send_remailer_key(self, recipient):
+    def send_remailer_key(self):
         msg = email.message.Message()
         payload = '%s\n\n' % Utils.capstring()
         payload += 'Here is the Mixmaster key:\n\n'
@@ -113,17 +124,11 @@ class MailMessage():
         payload += f.read()
         f.close()
         msg.set_payload(payload)
-        msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
-                                   config.get('mail', 'address'))
         msg["Subject"] = "Remailer key for %s" % config.get('general',
                                                             'shortname')
-        msg["Message-ID"] = Utils.msgid()
-        msg['Date'] = email.utils.formatdate()
-        msg['To'] = recipient
-        self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
-        log.debug("Sent remailer-key to %s" % recipient)
+        return msg
 
-    def send_remailer_conf(self, recipient):
+    def send_remailer_conf(self):
         msg = email.message.Message()
         payload = "Remailer-Type: %s\n" % config.get('general', 'version')
         payload += "Supported format: Mixmaster\n"
@@ -142,15 +147,37 @@ class MailMessage():
         for h in pubring.get_headers():
             payload += h + "\n"
         msg.set_payload(payload)
-        msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
-                                   config.get('mail', 'address'))
         msg["Subject"] = ("Capabilities of the %s remailer"
                           % config.get('general', 'shortname'))
-        msg["Message-ID"] = Utils.msgid()
-        msg['Date'] = email.utils.formatdate()
-        msg['To'] = recipient
-        self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
-        log.debug("Sent remailer-conf to %s" % recipient)
+        return msg
+
+    def send_remailer_help(self):
+        filename = config.get('etc', 'helpfile')
+        msg = email.message.Message()
+        if os.path.isfile(filename):
+            f = open(filename, 'r')
+            payload = f.read()
+            f.close()
+        else:
+            payload = "No help information available\n"
+        msg.set_payload(payload)
+        msg["Subject"] = ("Help info for the %s remailer"
+                          % config.get('general', 'shortname'))
+        return msg
+
+    def send_remailer_adminkey(self):
+        filename = config.get('etc', 'adminkey')
+        msg = email.message.Message()
+        if os.path.isfile(filename):
+            f = open(filename, 'r')
+            payload = f.read()
+            f.close()
+        else:
+            payload = "No adminkey available\n"
+        msg.set_payload(payload)
+        msg["Subject"] = ("Admin PGP Key for the %s Remailer"
+                          % config.get('general', 'shortname'))
+        return msg
 
     def extract_packet(self, msgobj):
         """-----BEGIN REMAILER MESSAGE-----
