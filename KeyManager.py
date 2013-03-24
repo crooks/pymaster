@@ -114,7 +114,7 @@ class KeyUtils():
             return x % m
 
 
-class SecretKey(KeyUtils):
+class Secring(KeyUtils):
     def __init__(self):
         self.logname = "Pymaster.%s" % __name__
         log = logging.getLogger(self.logname)
@@ -185,6 +185,7 @@ class SecretKey(KeyUtils):
         Public Key overwrites the existing file.
         """
 
+        log.debug("Generating new keypair")
         keyobj = RSA.generate(1024)
         #public = RSA.public(keyobj)
         secret, public = self.rsaobj2mix(keyobj)
@@ -264,8 +265,12 @@ class SecretKey(KeyUtils):
         public = secret
         assert len(public) == 258
         secret += Crypto.Util.number.long_to_bytes(keyobj.d)
-        secret += Crypto.Util.number.long_to_bytes(keyobj.p)
-        secret += Crypto.Util.number.long_to_bytes(keyobj.q)
+        if keyobj.p >= keyobj.q:
+            secret += Crypto.Util.number.long_to_bytes(keyobj.p)
+            secret += Crypto.Util.number.long_to_bytes(keyobj.q)
+        else:
+            secret += Crypto.Util.number.long_to_bytes(keyobj.q)
+            secret += Crypto.Util.number.long_to_bytes(keyobj.p)
         secret += Crypto.Util.number.long_to_bytes(keyobj.dmp1)
         secret += Crypto.Util.number.long_to_bytes(keyobj.dmq1)
         secret += Crypto.Util.number.long_to_bytes(keyobj.iqmp)
@@ -511,38 +516,17 @@ class Pubring(KeyUtils):
         f.close()
 
 
-class PubCache():
-    def __init__(self):
-        self.cache = {}
-
-    def __setitem__(self, name, headtup):
-        self.cache[name] = headtup
-
-    def __getitem__(self, name):
-        # header[0] Email Address
-        # header[1] KeyID
-        # header[2] Mixmaster Version
-        # header[3] Capstring
-        # header[4] RSA Key Object
-        if not name in self.cache:
-            return None
-        if len(self.cache[name]) == 7:
-            if timing.dateobj(self.cache[name][6]) < timing.now():
-                del self.cache[name]
-                return None
-        return self.cache[name][0:5]
-
-
+log = logging.getLogger("Pymaster.%s" % __name__)
 if (__name__ == "__main__"):
     log = logging.getLogger("Pymaster")
     log.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     log.addHandler(handler)
     log.info("Running Pymaster as %s", __name__)
-    p = PublicKey()
+    s = Secring()
+    p = Pubring()
     p.read_pubring()
     remailer = p['banana']
     if remailer is not None:
         print remailer[0], remailer[1]
-        s = SecretKey()
         print s[remailer[1]]

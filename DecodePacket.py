@@ -103,7 +103,7 @@ class Mixmaster():
         keyid = keyid.encode("hex")
         log.debug("Message is encrypted to key: %s", keyid)
         # Use the session key to decrypt the 3DES Symmetric key
-        seckey = secret_key[keyid]
+        seckey = secring[keyid]
         if seckey is None:
             raise ValidationError("Secret Key not found")
         pkcs1 = PKCS1_v1_5.new(seckey)
@@ -357,7 +357,7 @@ class ConfFiles():
 
 
 log = logging.getLogger("Pymaster.DecodePacket")
-secret_key = KeyManager.SecretKey()
+secring = KeyManager.Secring()
 pubring = KeyManager.Pubring()
 chain = Chain.Chain()
 if (__name__ == "__main__"):
