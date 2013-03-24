@@ -168,6 +168,8 @@ class MailMessage():
             "-----END REMAILER MESSAGE-----" not in mailmsg):
             raise MailError("No Remailer Message cutmarks")
         begin = mailmsg.index("-----BEGIN REMAILER MESSAGE-----")
+        if begin > 10:
+            raise MailError("BEGIN cutmark not at top of message")
         end = mailmsg.index("-----END REMAILER MESSAGE-----")
         length = int(mailmsg[begin + 1])
         digest = mailmsg[begin + 2].decode("base64")

@@ -278,11 +278,15 @@ class Mixmaster():
         """
         # This is the wrap width for Mixmaster Base64
         n = 40
+        checksum = MD5.new(data=binary).digest().encode("base64")
+        length = len(binary)
         s = binary.encode("base64")
         s = ''.join(s.split("\n"))
         payload = "::\n"
         payload += "Remailer-Type: %s\n\n" % self.remailer_type
         payload += "-----BEGIN REMAILER MESSAGE-----\n"
+        payload += "%s\n" % length
+        payload += "%s\n" % checksum
         while len(s) > 0:
             payload += s[:n] + "\n"
             s = s[n:]
