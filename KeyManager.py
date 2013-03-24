@@ -116,8 +116,6 @@ class KeyUtils():
 
 class Secring(KeyUtils):
     def __init__(self):
-        self.logname = "Pymaster.%s" % __name__
-        log = logging.getLogger(self.logname)
         self.secring = config.get('keys', 'secring')
         # State that we last did a Cache reload at some arbitrary date in the
         # past.
@@ -141,6 +139,8 @@ class Secring(KeyUtils):
             # process should take care of it.
             self.newkeys()
             self.read_secring()
+        log.info("Initialized Secring. Path=%s, Keys=%s",
+                 self.secring, len(self.cache))
 
     def __setitem__(self, keyid, keytup):
         self.cache[keyid] = keytup
@@ -292,7 +292,6 @@ class Secring(KeyUtils):
         -----End Mix Key-----
         """
 
-        log = logging.getLogger("%s.read_secring" % self.logname)
         if not ignore_date and timing.last_midnight() <= self.last_cache:
             log.debug("Not repopulating Secret Key cache.  This task is only "
                       "performed, at most, once per day.")
@@ -386,6 +385,7 @@ class Pubring(KeyUtils):
         self.cache = {}
         self.headers = []
         self.remailer_addresses = []
+        log.info("Initialized Pubring. Path=%s", pubring)
 
     def __setitem__(self, name, headtup):
         assert len(headtup) == 3

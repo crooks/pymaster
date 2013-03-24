@@ -50,7 +50,10 @@ class MailMessage():
     def __init__(self):
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
-        self.smtp = smtplib.SMTP(config.get('mail', 'server'))
+        server = config.get('mail', 'server')
+        self.smtp = smtplib.SMTP(server)
+        log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
+                  maildir, server)
 
     def iterate_mailbox(self):
         log.info("Beginning mailbox processing")
