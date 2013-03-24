@@ -21,6 +21,7 @@
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os.path
+import logging
 import Crypto.Random.random
 from Config import config
 
