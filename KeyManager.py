@@ -214,7 +214,7 @@ class Secring(KeyUtils):
         f.write('%s ' % config.get('general', 'shortname'))
         f.write('%s ' % config.get('mail', 'address'))
         f.write('%s ' % keyid)
-        f.write('%s ' % config.get('general', 'version'))
+        f.write('2:%s ' % config.get('general', 'version'))
         if config.getboolean('general', 'middleman'):
             conf = "MC"
         else:
