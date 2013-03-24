@@ -50,13 +50,13 @@ class MailMessage():
     def __init__(self):
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
-        server = config.get('mail', 'server')
-        self.smtp = smtplib.SMTP(server)
+        self.server = config.get('mail', 'server')
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
                   maildir, server)
 
     def iterate_mailbox(self):
         log.info("Beginning mailbox processing")
+        self.smtp = smtplib.SMTP(server)
         for k in self.inbox.iterkeys():
             try:
                 self.mail2pool(k)
@@ -64,6 +64,7 @@ class MailMessage():
                 print k, e
             self.inbox.remove(k)
         self.inbox.close()
+        self.smtp.quit()
 
     def mail2pool(self, msgkey):
         mailfile = self.inbox.get_file(msgkey)
@@ -133,7 +134,7 @@ class MailMessage():
         #TODO Filtered headers
         payload += "The following domains are blocked:\n"
         #TODO Dest Blocks
-        payload += '%s\n\n' % Utils.capstring()
+        payload += '\n%s\n\n' % Utils.capstring()
         payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
         for h in pubring.get_headers():
             payload += h + "\n"
@@ -188,12 +189,12 @@ class Pool():
                  self.pooldir, self.interval, self.rate, self.size)
         log.debug("First pool process at %s",
                   timing.timestamp(self.next_process))
-        self.smtp = smtplib.SMTP(config.get('mail', 'server'))
 
     def process(self):
         if timing.now() < self.next_process:
             return 0
         log.info("Beginning Pool processing.")
+        smtp = smtplib.SMTP(config.get('mail', 'server'))
         for f in self.pick_files():
             log.debug("Processing file: %s", f)
             try:
@@ -218,6 +219,7 @@ class Pool():
                                        config.get('mail', 'address'))
             #self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
             self.delete(f)
+        smtp.quit()
         # Return the time for the next pool processing.
         self.next_process = timing.dhms_future(self.interval)
         log.debug("Next pool process at %s",

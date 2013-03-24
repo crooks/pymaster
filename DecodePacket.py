@@ -356,7 +356,7 @@ class ConfFiles():
         return False
 
 
-log = logging.getLogger("Pymaster.DecodePacket")
+log = logging.getLogger("Pymaster.%s" % __name__)
 secring = KeyManager.Secring()
 pubring = KeyManager.Pubring()
 chain = Chain.Chain()
@@ -368,8 +368,3 @@ if (__name__ == "__main__"):
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
-
-    #pool = Pool()
-    #pool.process()
-    print hop
-    print pubring[hop]
