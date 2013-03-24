@@ -158,8 +158,10 @@ class RandHop():
         self.pubring = KeyManager.Pubring()
 
     def randhop(self, packet):
-        rem_data = self.exitnode()
+        exitname = self.exitnode()
+        rem_data = exitname
         self.header = OuterHeader(rem_data, 1)
+        log.debug("Attempting Randhop to: %s <%s>", exitname, rem_data[0])
         payload = (self.header.outer_header +
                    Crypto.Random.get_random_bytes(9728))
         assert len(payload) == 10240

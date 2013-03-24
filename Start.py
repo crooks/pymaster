@@ -57,7 +57,9 @@ class MailMessage():
     def iterate_mailbox(self):
         log.info("Beginning mailbox processing")
         self.smtp = smtplib.SMTP(self.server)
-        for k in self.inbox.iterkeys():
+        messages = self.inbox.keys()
+        log.debug("Processing %s messages from mailbox.", len(messages))
+        for k in messages:
             try:
                 self.mail2pool(k)
             except MailError, e:
@@ -218,7 +220,7 @@ class Pool():
             msg["Date"] = email.Utils.formatdate()
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                        config.get('mail', 'address'))
-            #self.smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+            smtp.sendmail(msg["From"], msg["To"], msg.as_string())
             self.delete(f)
         smtp.quit()
         # Return the time for the next pool processing.
