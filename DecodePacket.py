@@ -282,14 +282,16 @@ class Mixmaster():
         length = len(binary)
         s = binary.encode("base64")
         s = ''.join(s.split("\n"))
-        payload = "::\n"
-        payload += "Remailer-Type: %s\n\n" % self.remailer_type
-        payload += "-----BEGIN REMAILER MESSAGE-----\n"
-        payload += "%s\n" % length
-        payload += "%s\n" % checksum
+        header = "::\n"
+        header += "Remailer-Type: %s\n\n" % self.remailer_type
+        header += "-----BEGIN REMAILER MESSAGE-----\n"
+        header += "%s\n" % length
+        header += "%s\n" % checksum
+        payload = ""
         while len(s) > 0:
             payload += s[:n] + "\n"
             s = s[n:]
+        payload = header + payload
         payload += "-----END REMAILER MESSAGE-----\n"
         return payload
 
