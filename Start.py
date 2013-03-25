@@ -32,6 +32,7 @@ from Config import config
 from Crypto.Random import random
 import timing
 import DecodePacket
+import EncodePacket
 import KeyManager
 import Utils
 
@@ -211,6 +212,7 @@ class MailMessage():
 class Pool():
     def __init__(self):
         self.m = DecodePacket.Mixmaster()
+        self.dummy = EncodePacket.Dummy()
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
@@ -228,44 +230,49 @@ class Pool():
         log.info("Beginning Pool processing.")
         smtp = smtplib.SMTP(config.get('mail', 'server'))
         for f in self.pick_files():
-            log.debug("Processing file: %s", f)
-            try:
-                mixobj = self.read_file(f)
-            except PayloadError, e:
-                log.warn("%s: Payload Error: %s", f, e)
-                self.delete(f)
-                continue
-            try:
-                msg = self.m.process(mixobj)
-            except DecodePacket.ValidationError, e:
-                log.warn("%s: Validation Error: %s", f, e)
-                self.delete(f)
-                continue
-            except DecodePacket.DummyMessage, e:
-                log.debug("%s: Dummy message", f)
-                self.delete(f)
-                continue
+            fq = os.path.join(config.get('paths', 'pool'), f)
+            if fq.startswith("m"):
+                log.debug("Processing file: %s", f)
+                try:
+                    mixobj = self.read_file(fq)
+                except PayloadError, e:
+                    log.warn("%s: Payload Error: %s", f, e)
+                    self.delete(fq)
+                    continue
+                try:
+                    msg = self.m.process(mixobj)
+                except DecodePacket.ValidationError, e:
+                    log.warn("%s: Validation Error: %s", f, e)
+                    self.delete(fq)
+                    continue
+                except DecodePacket.DummyMessage, e:
+                    log.debug("%s: Dummy message", f)
+                    self.delete(fq)
+                    continue
+            elif f.startswith("o"):
+                msg = email.message_from_file(fq)
             msg["Message-ID"] = Utils.msgid()
             msg["Date"] = email.Utils.formatdate()
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                        config.get('mail', 'address'))
             smtp.sendmail(msg["From"], msg["To"], msg.as_string())
-            self.delete(f)
+            self.delete(fq)
         smtp.quit()
+        if random.randint(0, 100) > 25:
+            log.debug("Generating dummy message.")
+            self.dummy.generate()
         # Return the time for the next pool processing.
         self.next_process = timing.dhms_future(self.interval)
         log.debug("Next pool process at %s",
                   timing.timestamp(self.next_process))
 
-    def delete(self, f):
+    def delete(self, fq):
         """Delete files from the Mixmaster Pool."""
-        fq = os.path.join(config.get('paths', 'pool'), f)
         os.remove(fq)
         log.debug("%s: Deleted from pool.", f)
 
     def read_file(self, filename):
-        fq = os.path.join(config.get('paths', 'pool'), filename)
-        f = open(fq, 'rb')
+        f = open(filename, 'rb')
         packet = f.read()
         f.close()
         if len(packet) != 20480:

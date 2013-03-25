@@ -32,6 +32,7 @@ import timing
 import Chain
 import email
 import KeyManager
+import Utils
 
 
 log = logging.getLogger("Pymaster.EncodePacket")
@@ -218,7 +219,7 @@ class Dummy(Construct):
     def __init__(self):
         super(Dummy, self).__init__()
 
-    def dummy(self):
+    def generate(self):
         rem_data = self.exitnode()
         self.header = OuterHeader(rem_data, 1)
         header = (self.header.outer_header +
@@ -240,7 +241,9 @@ class Dummy(Construct):
         msgobj = email.message.Message()
         msgobj.add_header('To', rem_data[0])
         msgobj.set_payload(self.mixprep(header + payload))
-        return msgobj
+        f = open(Utils.pool_filename('o'), 'w')
+        f.write(msgobj.as_string())
+        f.close()
 
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
@@ -258,5 +261,4 @@ if (__name__ == "__main__"):
     msg = email.message_from_file(f)
     f.close()
     dummy = Dummy()
-    msg = dummy.dummy()
-    print msg.as_string()
+    dummy.generate()
