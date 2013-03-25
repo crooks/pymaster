@@ -152,26 +152,10 @@ class Body():
         return headstr
 
 
-class RandHop():
+class Construct(object):
     def __init__(self):
         self.chain = Chain.Chain()
         self.pubring = KeyManager.Pubring()
-
-    def randhop(self, packet):
-        rem_data = self.exitnode()
-        self.header = OuterHeader(rem_data, 1)
-        payload = (self.header.outer_header +
-                   Crypto.Random.get_random_bytes(9728))
-        assert len(payload) == 10240
-        desobj = DES3.new(self.header.inner_header.des3key,
-                          DES3.MODE_CBC,
-                          IV=self.header.inner_header.info.iv)
-        payload += desobj.encrypt(packet.dbody)
-        assert len(payload) == 20480
-        msgobj = email.message.Message()
-        msgobj.add_header('To', rem_data[0])
-        msgobj.set_payload(self.mixprep(payload))
-        return msgobj
 
     def exitnode(self):
         # pubring[0]    Email Address
@@ -181,7 +165,7 @@ class RandHop():
         # pubring[4]    Pycrypto Key Object
         name = self.chain.randexit()
         rem_data = self.pubring[name]
-        log.debug("Attempting Randhop to: %s <%s>", name, rem_data[0])
+        log.debug("Selected Exit-node: %s <%s>", name, rem_data[0])
         return rem_data
 
     def mixprep(self, binary):
@@ -199,7 +183,8 @@ class RandHop():
                    % config.get('general', 'version'))
         header += "-----BEGIN REMAILER MESSAGE-----\n"
         header += "%s\n" % length
-        header += "%s\n" % digest
+        # No \n after digest.  The Base64 encoding adds it.
+        header += "%s" % digest
         payload = ""
         while len(s) > 0:
             payload += s[:n] + "\n"
@@ -207,6 +192,55 @@ class RandHop():
         payload += "-----END REMAILER MESSAGE-----\n"
         return header + payload
 
+
+class RandHop(Construct):
+    def __init__(self):
+        super(RandHop, self).__init__()
+
+    def randhop(self, packet):
+        rem_data = self.exitnode()
+        self.header = OuterHeader(rem_data, 1)
+        payload = (self.header.outer_header +
+                   Crypto.Random.get_random_bytes(9728))
+        assert len(payload) == 10240
+        desobj = DES3.new(self.header.inner_header.des3key,
+                          DES3.MODE_CBC,
+                          IV=self.header.inner_header.info.iv)
+        payload += desobj.encrypt(packet.dbody)
+        assert len(payload) == 20480
+        msgobj = email.message.Message()
+        msgobj.add_header('To', rem_data[0])
+        msgobj.set_payload(self.mixprep(payload))
+        return msgobj
+
+
+class Dummy(Construct):
+    def __init__(self):
+        super(Dummy, self).__init__()
+
+    def dummy(self):
+        rem_data = self.exitnode()
+        self.header = OuterHeader(rem_data, 1)
+        header = (self.header.outer_header +
+                   Crypto.Random.get_random_bytes(9728))
+        assert len(header) == 10240
+        # Number of Destinations (1)
+        payload = struct.pack("B", 1)
+        # Idenitfy this as a Dummy message
+        payload += "null:" + ("\x00" * 75)
+        # Number of Headers (None in this instance)
+        payload += struct.pack("B", 0)
+        # pad fake payload to 10240 Bytes
+        payload += Crypto.Random.get_random_bytes(10158)
+        desobj = DES3.new(self.header.inner_header.des3key,
+                          DES3.MODE_CBC,
+                          IV=self.header.inner_header.info.iv)
+        payload = desobj.encrypt(payload)
+        assert len(payload) == 10240
+        msgobj = email.message.Message()
+        msgobj.add_header('To', rem_data[0])
+        msgobj.set_payload(self.mixprep(header + payload))
+        return msgobj
 
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
@@ -223,6 +257,6 @@ if (__name__ == "__main__"):
     f = open('/opt/steve/pymaster/testmsg.txt', 'r')
     msg = email.message_from_file(f)
     f.close()
-    randhop = RandHop()
-    msg = randhop.randhop(msg)
+    dummy = Dummy()
+    msg = dummy.dummy()
     print msg.as_string()
