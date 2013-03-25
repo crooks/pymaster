@@ -111,7 +111,7 @@ class MailMessage():
         outmsg["Message-ID"] = Utils.msgid()
         outmsg['Date'] = email.utils.formatdate()
         outmsg['To'] = addy
-        self.smtp.sendmail(msg["From"], msg["To"], outmsg.as_string())
+        self.smtp.sendmail(outmsg["From"], outmsg["To"], outmsg.as_string())
         log.debug("Sent %s to %s", outmsg['Subject'], outmsg['To'])
         return True
 

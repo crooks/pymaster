@@ -195,7 +195,8 @@ class RandHop():
         s = binary.encode("base64")
         s = ''.join(s.split("\n"))
         header = "::\n"
-        header += "Remailer-Type: %s\n\n" % config.get('general', 'version')
+        header += ("Remailer-Type: mixmaster-%s\n\n"
+                   % config.get('general', 'version'))
         header += "-----BEGIN REMAILER MESSAGE-----\n"
         header += "%s\n" % length
         header += "%s\n" % digest
