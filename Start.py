@@ -231,7 +231,7 @@ class Pool():
         smtp = smtplib.SMTP(config.get('mail', 'server'))
         for f in self.pick_files():
             fq = os.path.join(config.get('paths', 'pool'), f)
-            if fq.startswith("m"):
+            if f.startswith("m"):
                 log.debug("Processing file: %s", f)
                 try:
                     mixobj = self.read_file(fq)
@@ -250,7 +250,9 @@ class Pool():
                     self.delete(fq)
                     continue
             elif f.startswith("o"):
-                msg = email.message_from_file(fq)
+                fqf = open(fq, 'r')
+                msg = email.message_from_file(fqf)
+                fqf.close()
             msg["Message-ID"] = Utils.msgid()
             msg["Date"] = email.Utils.formatdate()
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
@@ -269,7 +271,6 @@ class Pool():
     def delete(self, fq):
         """Delete files from the Mixmaster Pool."""
         os.remove(fq)
-        log.debug("%s: Deleted from pool.", f)
 
     def read_file(self, filename):
         f = open(filename, 'rb')
