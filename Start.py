@@ -260,7 +260,8 @@ class Pool():
             smtp.sendmail(msg["From"], msg["To"], msg.as_string())
             self.delete(fq)
         smtp.quit()
-        if random.randint(0, 100) > 25:
+        # OUtbound dummy message generation.
+        if random.randint(0, 100) < config.get('pool', 'outdummy'):
             log.debug("Generating dummy message.")
             self.dummy.generate()
         # Return the time for the next pool processing.
