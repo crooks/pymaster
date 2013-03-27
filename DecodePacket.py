@@ -33,7 +33,6 @@ import Crypto.Random
 from Config import config
 import EncodePacket
 import KeyManager
-import Chain
 import Utils
 
 
@@ -71,7 +70,6 @@ class Mixmaster():
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'), 'dest_blk')
         self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
         self.middleman = config.getboolean('general', 'middleman')
-        self.randhop = EncodePacket.RandHop()
 
     def process(self, packet):
         self.msg = email.message.Message()
@@ -80,7 +78,7 @@ class Mixmaster():
         try:
             self.unpack(packet)
         except DestinationError:
-            self.msg = self.randhop.randhop(packet)
+            self.msg = EncodePacket.randhop(packet)
         return self.msg
 
     def packet_decrypt(self, packet):
@@ -365,8 +363,6 @@ class ConfFiles():
 
 log = logging.getLogger("Pymaster.%s" % __name__)
 secring = KeyManager.Secring()
-pubring = KeyManager.Pubring()
-chain = Chain.Chain()
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')

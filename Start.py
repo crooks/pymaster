@@ -212,7 +212,6 @@ class MailMessage():
 class Pool():
     def __init__(self):
         self.m = DecodePacket.Mixmaster()
-        self.dummy = EncodePacket.Dummy()
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
@@ -263,7 +262,7 @@ class Pool():
         # OUtbound dummy message generation.
         if random.randint(0, 100) < config.get('pool', 'outdummy'):
             log.debug("Generating dummy message.")
-            self.dummy.generate()
+            EncodePacket.dummy()
         # Return the time for the next pool processing.
         self.next_process = timing.dhms_future(self.interval)
         log.debug("Next pool process at %s",

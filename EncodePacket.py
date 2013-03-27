@@ -153,98 +153,89 @@ class Body():
         return headstr
 
 
-class Construct(object):
-    def __init__(self):
-        self.chain = Chain.Chain()
-        self.pubring = KeyManager.Pubring()
-
-    def exitnode(self):
-        # pubring[0]    Email Address
-        # pubring[1]    Key ID (Hex encoded)
-        # pubring[2]    Version
-        # pubring[3]    Capabilities
-        # pubring[4]    Pycrypto Key Object
-        name = self.chain.randexit()
-        rem_data = self.pubring[name]
-        log.debug("Selected Exit-node: %s <%s>", name, rem_data[0])
-        return rem_data
-
-    def mixprep(self, binary):
-        """Take a binary string, encode it as Base64 and wrap it to lines of
-           length n.
-        """
-        # This is the wrap width for Mixmaster Base64
-        n = 40
-        length = len(binary)
-        digest = MD5.new(data=binary).digest().encode("base64")
-        s = binary.encode("base64")
-        s = ''.join(s.split("\n"))
-        header = "::\n"
-        header += ("Remailer-Type: mixmaster-%s\n\n"
-                   % config.get('general', 'version'))
-        header += "-----BEGIN REMAILER MESSAGE-----\n"
-        header += "%s\n" % length
-        # No \n after digest.  The Base64 encoding adds it.
-        header += "%s" % digest
-        payload = ""
-        while len(s) > 0:
-            payload += s[:n] + "\n"
-            s = s[n:]
-        payload += "-----END REMAILER MESSAGE-----\n"
-        return header + payload
+def mixprep(binary):
+    """Take a binary string, encode it as Base64 and wrap it to lines of
+       length n.
+    """
+    # This is the wrap width for Mixmaster Base64
+    n = 40
+    length = len(binary)
+    digest = MD5.new(data=binary).digest().encode("base64")
+    s = binary.encode("base64")
+    s = ''.join(s.split("\n"))
+    header = "::\n"
+    header += ("Remailer-Type: mixmaster-%s\n\n"
+               % config.get('general', 'version'))
+    header += "-----BEGIN REMAILER MESSAGE-----\n"
+    header += "%s\n" % length
+    # No \n after digest.  The Base64 encoding adds it.
+    header += "%s" % digest
+    payload = ""
+    while len(s) > 0:
+        payload += s[:n] + "\n"
+        s = s[n:]
+    payload += "-----END REMAILER MESSAGE-----\n"
+    return header + payload
 
 
-class RandHop(Construct):
-    def __init__(self):
-        super(RandHop, self).__init__()
-
-    def randhop(self, packet):
-        rem_data = self.exitnode()
-        self.header = OuterHeader(rem_data, 1)
-        payload = (self.header.outer_header +
-                   Crypto.Random.get_random_bytes(9728))
-        assert len(payload) == 10240
-        desobj = DES3.new(self.header.inner_header.des3key,
-                          DES3.MODE_CBC,
-                          IV=self.header.inner_header.info.iv)
-        payload += desobj.encrypt(packet.dbody)
-        assert len(payload) == 20480
-        msgobj = email.message.Message()
-        msgobj.add_header('To', rem_data[0])
-        msgobj.set_payload(self.mixprep(payload))
-        return msgobj
+def randhop(packet):
+    rem_data = exitnode()
+    header = OuterHeader(rem_data, 1)
+    payload = (header.outer_header +
+               Crypto.Random.get_random_bytes(9728))
+    assert len(payload) == 10240
+    desobj = DES3.new(header.inner_header.des3key,
+                      DES3.MODE_CBC,
+                      IV=header.inner_header.info.iv)
+    payload += desobj.encrypt(packet.dbody)
+    assert len(payload) == 20480
+    msgobj = email.message.Message()
+    msgobj.add_header('To', rem_data[0])
+    msgobj.set_payload(mixprep(payload))
+    return msgobj
 
 
-class Dummy(Construct):
-    def __init__(self):
-        super(Dummy, self).__init__()
+def dummy():
+    rem_data = exitnode()
+    outhead = OuterHeader(rem_data, 1)
+    header = (outhead.outer_header +
+              Crypto.Random.get_random_bytes(9728))
+    assert len(header) == 10240
+    # Number of Destinations (1)
+    payload = struct.pack("B", 1)
+    # Idenitfy this as a Dummy message
+    payload += "null:" + ("\x00" * 75)
+    # Number of Headers (None in this instance)
+    payload += struct.pack("B", 0)
+    # pad fake payload to 10240 Bytes
+    payload += Crypto.Random.get_random_bytes(10158)
+    desobj = DES3.new(outhead.inner_header.des3key,
+                      DES3.MODE_CBC,
+                      IV=outhead.inner_header.info.iv)
+    payload = desobj.encrypt(payload)
+    assert len(payload) == 10240
+    msgobj = email.message.Message()
+    msgobj.add_header('To', rem_data[0])
+    msgobj.set_payload(mixprep(header + payload))
+    f = open(Utils.pool_filename('o'), 'w')
+    f.write(msgobj.as_string())
+    f.close()
 
-    def generate(self):
-        rem_data = self.exitnode()
-        self.header = OuterHeader(rem_data, 1)
-        header = (self.header.outer_header +
-                   Crypto.Random.get_random_bytes(9728))
-        assert len(header) == 10240
-        # Number of Destinations (1)
-        payload = struct.pack("B", 1)
-        # Idenitfy this as a Dummy message
-        payload += "null:" + ("\x00" * 75)
-        # Number of Headers (None in this instance)
-        payload += struct.pack("B", 0)
-        # pad fake payload to 10240 Bytes
-        payload += Crypto.Random.get_random_bytes(10158)
-        desobj = DES3.new(self.header.inner_header.des3key,
-                          DES3.MODE_CBC,
-                          IV=self.header.inner_header.info.iv)
-        payload = desobj.encrypt(payload)
-        assert len(payload) == 10240
-        msgobj = email.message.Message()
-        msgobj.add_header('To', rem_data[0])
-        msgobj.set_payload(self.mixprep(header + payload))
-        f = open(Utils.pool_filename('o'), 'w')
-        f.write(msgobj.as_string())
-        f.close()
 
+def exitnode():
+    # pubring[0]    Email Address
+    # pubring[1]    Key ID (Hex encoded)
+    # pubring[2]    Version
+    # pubring[3]    Capabilities
+    # pubring[4]    Pycrypto Key Object
+    name = chain.randexit()
+    rem_data = pubring[name]
+    log.debug("Selected Exit-node: %s <%s>", name, rem_data[0])
+    return rem_data
+
+
+pubring = KeyManager.Pubring()
+chain = Chain.Chain()
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -260,5 +251,3 @@ if (__name__ == "__main__"):
     f = open('/opt/steve/pymaster/testmsg.txt', 'r')
     msg = email.message_from_file(f)
     f.close()
-    dummy = Dummy()
-    dummy.generate()
