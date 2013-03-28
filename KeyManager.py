@@ -128,7 +128,6 @@ class Secring(KeyUtils):
             log.info("Secret Keyring %s doesn't exist.  Generating new Key "
                      "pair.", self.secring)
             self.newkeys()
-        log.info("Performing initial Secret Key cacheing")
         self.read_secring()
         # self.cache is always defined because read_keyring initializes it.
         if len(self.cache) == 0:
@@ -415,11 +414,6 @@ class Pubring(KeyUtils):
         # Only return the first five elements.  Nothing cares about the dates
         # after validation has happened.
         return self.cache[name][0:5]
-
-    def get_headers(self):
-        if len(self.headers) == 0:
-            self.read_pubring()
-        return self.headers
 
     def get_addresses(self):
         if len(self.remailer_addresses) == 0:

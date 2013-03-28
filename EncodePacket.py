@@ -234,6 +234,12 @@ def exitnode():
     return rem_data
 
 
+def pubring_headers():
+    if len(pubring.headers) == 0:
+        pubring.read_pubring()
+    return pubring.headers
+
+
 pubring = KeyManager.Pubring()
 chain = Chain.Chain()
 if (__name__ == "__main__"):
@@ -248,6 +254,5 @@ if (__name__ == "__main__"):
     #rem_name = "banana"
     #rem_data = pubring[rem_name]
     #header = OuterHeader(rem_data, 1)
-    f = open('/opt/steve/pymaster/testmsg.txt', 'r')
-    msg = email.message_from_file(f)
-    f.close()
+
+    print pubring_headers()

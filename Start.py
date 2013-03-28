@@ -33,7 +33,6 @@ from Crypto.Random import random
 import timing
 import DecodePacket
 import EncodePacket
-import KeyManager
 import Utils
 
 
@@ -145,7 +144,7 @@ class MailMessage():
         #TODO Dest Blocks
         payload += '\n%s\n\n' % Utils.capstring()
         payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
-        for h in pubring.get_headers():
+        for h in EncodePacket.pubring_headers():
             payload += h + "\n"
         msg.set_payload(payload)
         msg["Subject"] = ("Capabilities of the %s remailer"
@@ -312,7 +311,6 @@ class Pool():
         end = start + process_num
         return poolfiles[start:end]
 
-pubring = KeyManager.Pubring()
 log = logging.getLogger("Pymaster")
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
