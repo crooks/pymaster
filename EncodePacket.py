@@ -30,7 +30,7 @@ import Crypto.Random
 from Config import config
 import timing
 import Chain
-import email
+import email.message
 import KeyManager
 import Utils
 
@@ -53,10 +53,7 @@ class FinalHop():
 
 
 class EncryptedHeader():
-    def __init__(self, msg_type):
-        self.make_header(msg_type)
-
-    def make_header(self, msg_type):
+    def make_header(self, odes3key, oiv, msg_type):
         """Packet ID                            [ 16 bytes]
            Triple-DES key                       [ 24 bytes]
            Packet type identifier               [  1 byte ]
@@ -82,7 +79,9 @@ class EncryptedHeader():
         packet += digest
         pad = 328 - len(packet)
         packet += Crypto.Random.get_random_bytes(pad)
-        assert len(packet) == 328
+        desobj = DES3.new(odes3key, DES3.MODE_CBC, IV=oiv)
+        self.packet = desobj.encrypt(packet)
+        assert len(self.packet) == 328
         self.des3key = des3key
         self.info = info
         self.packet = packet
@@ -98,27 +97,31 @@ class OuterHeader():
     """
     def __init__(self, rem_data, msg_type):
         self.rem_data = rem_data
+        self.inner = EncryptedHeader()
         self.make_outer(msg_type)
 
     def make_outer(self, msg_type):
         keyid = self.rem_data[1].decode('hex')
+        # This 3DES key and IV are only used to encrypt the 328 Byte Inner
+        # Header.  The 3DES key is then RSA Encrypted using the Remailer's
+        # Public key.
         des3key = Crypto.Random.get_random_bytes(24)
+        iv = Crypto.Random.get_random_bytes(8)
         pkcs1 = PKCS1_v1_5.new(self.rem_data[4])
         rsakey = pkcs1.encrypt(des3key)
+        # Why does Mixmaster record the RSA data length when the spec
+        # allows for nothing but 1024 bit keys?
         lenrsa = len(rsakey)
         assert lenrsa == 128
-        iv = Crypto.Random.get_random_bytes(8)
-        inner = EncryptedHeader(msg_type)
-        desobj = DES3.new(des3key, DES3.MODE_CBC, IV=iv)
+        self.inner.make_header(des3key, iv, msg_type)
         outer_header = struct.pack('16sB128s8s328s31s',
                                    keyid,
                                    lenrsa,
                                    rsakey,
                                    iv,
-                                   desobj.encrypt(inner.packet),
+                                   self.inner.packet,
                                    Crypto.Random.get_random_bytes(31))
         assert len(outer_header) == 512
-        self.inner_header = inner
         self.outer_header = outer_header
 
 
@@ -184,9 +187,9 @@ def randhop(packet):
     payload = (header.outer_header +
                Crypto.Random.get_random_bytes(9728))
     assert len(payload) == 10240
-    desobj = DES3.new(header.inner_header.des3key,
+    desobj = DES3.new(header.inner.des3key,
                       DES3.MODE_CBC,
-                      IV=header.inner_header.info.iv)
+                      IV=header.inner.info.iv)
     payload += desobj.encrypt(packet.dbody)
     assert len(payload) == 20480
     msgobj = email.message.Message()
@@ -209,9 +212,9 @@ def dummy():
     payload += struct.pack("B", 0)
     # pad fake payload to 10240 Bytes
     payload += Crypto.Random.get_random_bytes(10158)
-    desobj = DES3.new(outhead.inner_header.des3key,
+    desobj = DES3.new(outhead.inner.des3key,
                       DES3.MODE_CBC,
-                      IV=outhead.inner_header.info.iv)
+                      IV=outhead.inner.info.iv)
     payload = desobj.encrypt(payload)
     assert len(payload) == 10240
     msgobj = email.message.Message()
@@ -251,8 +254,6 @@ if (__name__ == "__main__"):
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
-    #rem_name = "banana"
-    #rem_data = pubring[rem_name]
-    #header = OuterHeader(rem_data, 1)
-
-    print pubring_headers()
+    rem_name = "banana"
+    rem_data = pubring[rem_name]
+    header = OuterHeader(rem_data, 1)
