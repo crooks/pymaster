@@ -102,6 +102,11 @@ class MailMessage():
             outmsg = self.send_remailer_help()
         elif sub == 'remailer-adminkey':
             outmsg = self.send_remailer_adminkey()
+        elif sub.startswith('Mail delivery failed:'):
+            log.debug("Message delivery failure.  Storing message.")
+            f = open("/home/pymaster/check.txt", "a")
+            f.write(inmsg.as_string())
+            f.close()
         else:
             log.debug("%s: No programmed response for this Subject",
                       inmsg.get("Subject"))
