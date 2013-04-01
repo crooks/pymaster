@@ -203,11 +203,7 @@ class Mixmaster():
             ebyte = sbyte + 80 * hfields
             headlist = list(struct.unpack(head_struct,
                                           packet.dbody[sbyte:ebyte]))
-            heads = self.unpad(headlist)
-            for h in heads:
-                head, content = h.split(": ", 1)
-                self.msg.add_header(head, content)
-                log.debug("Defined outbound header (%s: %s)", head, content)
+            self.heads_allow(headlist)
             sbyte = ebyte
             # The length of the message is prepended by the 4 Byte length,
             # hence why we need to add 4 to ebyte.
@@ -330,6 +326,34 @@ class Mixmaster():
                 # the stated destination.
                 alw_dests.append(d)
         return alw_dests
+
+    def heads_allow(self, heads):
+        """Read the list of destinations defined in the message.  Strip out
+        any that are explicitly blocked and return a new list of allowed
+        destinations.  If any one is not explicitly allowed and we're running
+        as a Middleman, raise a DestinationError and randhop it.
+        """
+        for h in self.unpad(heads):
+            head, content = h.split(": ", 1)
+            alw = self.headalw.hit(head)
+            blk = self.headblk.hit(head)
+            if alw and not blk:
+                self.msg[head] = content
+            elif blk and not alw:
+                log.debug("%s: Header explicitly blocked.", head)
+            elif blk and alw:
+                # Both allow and block hits mean a decision has to be made on
+                # which has priority.  If block_first is True then allow is the
+                # second (most significant) check.  If it's False, block is
+                # more significant and the destinaion is not allowed.
+                if config.getboolean('general', 'block_first'):
+                    self.msg[head] = content
+                else:
+                    log.info("%s: Header matches allow and block rules but "
+                             "configuration dictates that block takes "
+                             "priority", head)
+            else:
+                self.msg[head] = content
 
 
 class ConfFiles():
