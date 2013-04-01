@@ -42,12 +42,35 @@ class ValidationError(Exception):
     pass
 
 
-class FinalHop():
-    """Packet type 1 (final hop):
-       Message ID                     [ 16 bytes]
-       Initialization vector          [  8 bytes]
-    """
-    def __init__(self):
+class PacketInfo():
+    def intermediate_hop(self, nexthop):
+        """Packet type 0 (intermediate hop):
+           19 Initialization vectors      [152 bytes]
+           Remailer address               [ 80 bytes]
+        """
+        ivs = []
+        for iv in range(18):
+            ivs.append(Crypto.Random.get_random_bytes(8))
+        self.addy = nexthop
+        self.ivs = ivs
+
+    def final_hop(self):
+        """Packet type 1 (final hop):
+           Message ID                     [ 16 bytes]
+           Initialization vector          [  8 bytes]
+        """
+        self.messageid = Crypto.Random.get_random_bytes(16)
+        self.iv = Crypto.Random.get_random_bytes(8)
+
+    def final_partial(self, chunknum, numchunks):
+        """Packet type 2 (final hop, partial message):
+           Chunk number                   [  1 byte ]
+           Number of chunks               [  1 byte ]
+           Message ID                     [ 16 bytes]
+           Initialization vector          [  8 bytes]
+        """
+        self.chunknum = chunknum
+        self.numchunks = numchunks
         self.messageid = Crypto.Random.get_random_bytes(16)
         self.iv = Crypto.Random.get_random_bytes(8)
 
@@ -66,12 +89,33 @@ class EncryptedHeader():
         des3key = Crypto.Random.get_random_bytes(24)
         ts_sig = struct.pack('BBBBB', 48, 48, 48, 48, 0)
         timestamp = ts_sig + struct.pack('<H', timing.epoch_days())
-        if msg_type == 1:
-            info = FinalHop()
-            packet = struct.pack('16s24sB16s8s7s',
+        info = PacketInfo()
+        if msg_type ==0:
+            info.intermediate_hop(addy)
+            packet = struct.pack("@16s24sB152s80s7s",
                                  packetid,
                                  des3key,
                                  msg_type,
+                                 ''.join(info.ivs),
+                                 info.addy,
+                                 timestamp)
+        if msg_type == 1:
+            info.final_hop()
+            packet = struct.pack("@16s24sB16s8s7s",
+                                 packetid,
+                                 des3key,
+                                 msg_type,
+                                 info.messageid,
+                                 info.iv,
+                                 timestamp)
+        if msg_type == 2:
+            info.final_partial()
+            packet = struct.pack("@16s24sBBB16s8s7s",
+                                 packetid,
+                                 des3key,
+                                 msg_type,
+                                 info.chunknum,
+                                 info.numchunks,
                                  info.messageid,
                                  info.iv,
                                  timestamp)
@@ -95,34 +139,31 @@ class OuterHeader():
        Encrypted header part        [ 328 bytes]
        Padding                      [  31 bytes]
     """
-    def __init__(self, rem_data, msg_type):
-        self.rem_data = rem_data
-        self.inner = EncryptedHeader()
-        self.make_outer(msg_type)
-
-    def make_outer(self, msg_type):
-        keyid = self.rem_data[1].decode('hex')
+    def make_outer(self, rem_data, msg_type):
+        keyid = rem_data[1].decode('hex')
         # This 3DES key and IV are only used to encrypt the 328 Byte Inner
         # Header.  The 3DES key is then RSA Encrypted using the Remailer's
         # Public key.
         des3key = Crypto.Random.get_random_bytes(24)
         iv = Crypto.Random.get_random_bytes(8)
-        pkcs1 = PKCS1_v1_5.new(self.rem_data[4])
+        pkcs1 = PKCS1_v1_5.new(rem_data[4])
         rsakey = pkcs1.encrypt(des3key)
         # Why does Mixmaster record the RSA data length when the spec
         # allows for nothing but 1024 bit keys?
         lenrsa = len(rsakey)
         assert lenrsa == 128
-        self.inner.make_header(des3key, iv, msg_type)
+        inner = EncryptedHeader()
+        inner.make_header(des3key, iv, msg_type)
         outer_header = struct.pack('16sB128s8s328s31s',
                                    keyid,
                                    lenrsa,
                                    rsakey,
                                    iv,
-                                   self.inner.packet,
+                                   inner.packet,
                                    Crypto.Random.get_random_bytes(31))
         assert len(outer_header) == 512
         self.outer_header = outer_header
+        self.inner = inner
 
 
 class Body():
@@ -183,7 +224,8 @@ def mixprep(binary):
 
 def randhop(packet):
     rem_data = exitnode()
-    header = OuterHeader(rem_data, 1)
+    header = OuterHeader()
+    OuterHeader.make_outer(rem_data, 1)
     payload = (header.outer_header +
                Crypto.Random.get_random_bytes(9728))
     assert len(payload) == 10240
@@ -200,7 +242,8 @@ def randhop(packet):
 
 def dummy():
     rem_data = exitnode()
-    outhead = OuterHeader(rem_data, 1)
+    outhead = OuterHeader()
+    outhead.make_header(rem_data, 1)
     header = (outhead.outer_header +
               Crypto.Random.get_random_bytes(9728))
     assert len(header) == 10240
@@ -256,4 +299,5 @@ if (__name__ == "__main__"):
 
     rem_name = "banana"
     rem_data = pubring[rem_name]
-    header = OuterHeader(rem_data, 1)
+    header = OuterHeader()
+    header.make_outer(rem_data, 1)
