@@ -225,7 +225,7 @@ def mixprep(binary):
 def randhop(packet):
     rem_data = exitnode()
     header = OuterHeader()
-    OuterHeader.make_outer(rem_data, 1)
+    header.make_outer(rem_data, 1)
     payload = (header.outer_header +
                Crypto.Random.get_random_bytes(9728))
     assert len(payload) == 10240
@@ -243,7 +243,7 @@ def randhop(packet):
 def dummy():
     rem_data = exitnode()
     outhead = OuterHeader()
-    outhead.make_header(rem_data, 1)
+    outhead.make_outer(rem_data, 1)
     header = (outhead.outer_header +
               Crypto.Random.get_random_bytes(9728))
     assert len(header) == 10240
