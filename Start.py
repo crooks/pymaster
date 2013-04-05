@@ -328,7 +328,7 @@ if (__name__ == "__main__"):
 
     mail = MailMessage()
     pool = Pool()
-    sleep = config.getint('general', 'interval')
+    sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:
         mail.iterate_mailbox()
         pool.process()

@@ -42,6 +42,22 @@ def dhms_future(timestr):
     raise ValueError("%s: Unknown time period char" % unit)
 
 
+def dhms_secs(timestr):
+    """Take a string formatted as 00h and convert it to seconds.
+    """
+    period = int(timestr[0:-1])
+    unit = timestr[-1].lower()
+    if unit == "d":
+        return period * 24 * 60 * 60
+    elif unit == "h":
+        return period * 60 * 60
+    elif unit == "m":
+        return period * 60
+    elif unit == "s":
+        return period
+    raise ValueError("%s: Unknown time period char" % unit)
+
+
 def daydelta(dateobj, days):
     return dateobj + datetime.timedelta(days=days)
 

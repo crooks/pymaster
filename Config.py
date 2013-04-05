@@ -59,7 +59,7 @@ config.set('general', 'longname', 'Pymaster Remailer')
 config.set('general', 'loglevel', 'info')
 config.set('general', 'middleman', 0)
 config.set('general', 'klen', 128)
-config.set('general', 'interval', 60)
+config.set('general', 'interval', '5m')
 config.set('general', 'passphrase', 'A badly configured server')
 config.set('general', 'block_first', 1)
 
@@ -89,7 +89,6 @@ config.set('mail', 'server', 'localhost')
 config.set('mail', 'domain', 'here.invalid')
 config.set('mail', 'address', 'pymaster@domain.invalid')
 config.set('mail', 'outbound_address', 'noreply@here.invalid')
-config.set('mail', 'interval', '15m')
 
 # Try and process the .aam2mailrc file.  If it doesn't exist, we
 # bailout as some options are compulsory.
