@@ -27,6 +27,7 @@ import timing
 import logging
 import re
 
+
 def capstring():
     """Return the remailer capstring.
     """
@@ -36,9 +37,12 @@ def capstring():
         caps += ' middle'
     if config.getint('pool', 'size') >= 5:
         caps += ' reord'
+    if config.has_option('general', 'extflags'):
+        caps += ' %s' % config.get('general', 'extflags')
     caps += ' klen%s' % config.getint('general', 'klen')
     caps += '\";'
     return caps
+
 
 def pool_filename(prefix):
     """Make up a suitably random filename for the pool entry.
@@ -50,10 +54,12 @@ def pool_filename(prefix):
             break
     return fq
 
+
 def msgid():
     return "<%s.%s@%s>" % (timing.msgidstamp(),
                            Crypto.Random.get_random_bytes(4).encode("hex"),
                            config.get('mail', 'mid'))
+
 
 def file2regex(filename):
     """Read a given file and return a list of items and, if regex formatted, a
