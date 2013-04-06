@@ -51,6 +51,7 @@ class MailMessage():
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
         self.server = config.get('mail', 'server')
+        self.decode = DecodePacket.Mixmaster()
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
                   maildir, self.server)
 
@@ -58,13 +59,15 @@ class MailMessage():
         log.info("Beginning mailbox processing")
         self.smtp = smtplib.SMTP(self.server)
         messages = self.inbox.keys()
-        log.debug("Processing %s messages from mailbox.", len(messages))
+        self.added_to_pool = 0
+        self.remailer_foo_msgs = 0
+        self.failed_msgs = 0
         for k in messages:
-            try:
-                self.mail2pool(k)
-            except MailError, e:
-                print k, e
+            self.mail2pool(k)
             self.inbox.remove(k)
+        log.info("Mail processing complete. Processed=%s, Pooled=%s, Text=%s, Failed=%s",
+                  len(messages), self.added_to_pool, self.remailer_foo_msgs,
+                  self.failed_msgs)
         self.inbox.close()
         self.smtp.quit()
 
@@ -74,26 +77,34 @@ class MailMessage():
         mailfile.close()
         if msg.is_multipart():
             raise MailError("Message is multipart")
-        txtreply = self.remailer_foo(msg)
-        if txtreply:
-            log.debug("Responded to Remailer-Foo message")
+        try:
+            ismix = self.decode.extract_packet(msg)
+        except DecodePacket.ValidationError, e:
+            log.debug("Invalid Mixmaster message: %s", e)
+            return 0
+        if ismix:
+            self.added_to_pool += 1
         else:
-            packet = self.extract_packet(msg)
-            f = open(Utils.pool_filename('m'), 'wb')
-            f.write(packet)
-            f.close()
+            # If this isn't a remailer message, it might be a request for
+            # remailer info.
+            self.remailer_foo(msg)
 
     def remailer_foo(self, inmsg):
         if not 'Subject' in inmsg:
-            return False
-        sub = inmsg.get("Subject").lower().strip()
+            log.debug("Non-remailer message with no Subject.  Ignoring it.")
+            self.failed_msgs += 1
+            return 0
         if 'Reply-To' in inmsg:
             inmsg['From'] = inmsg['Reply-To']
         elif not 'From' in inmsg:
             # No Reply-To and no From.  We don't know where to send the
             # remailer-foo message so no point in trying.
-            return False
+            log.debug("Non-remailer message with no reply address.  "
+                      "Ignoring it")
+            self.failed_msgs += 1
+            return 0
         addy = inmsg['From']
+        sub = inmsg['Subject'].lower().strip()
         if sub == 'remailer-key':
             outmsg = self.send_remailer_key()
         elif sub == 'remailer-conf':
@@ -102,23 +113,24 @@ class MailMessage():
             outmsg = self.send_remailer_help()
         elif sub == 'remailer-adminkey':
             outmsg = self.send_remailer_adminkey()
-        elif sub.startswith('Mail delivery failed:'):
-            log.debug("Message delivery failure.  Storing message.")
-            f = open("/home/pymaster/check.txt", "a")
-            f.write(inmsg.as_string())
-            f.close()
         else:
-            log.debug("%s: No programmed response for this Subject",
-                      inmsg.get("Subject"))
-            return False
+            log.warn("%s: No programmed response for this Subject", sub)
+            self.msg2file(inmsg)
+            self.failed_msgs += 1
+            return 0
         outmsg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                       config.get('mail', 'address'))
         outmsg["Message-ID"] = Utils.msgid()
         outmsg['Date'] = email.utils.formatdate()
         outmsg['To'] = addy
         self.smtp.sendmail(outmsg["From"], outmsg["To"], outmsg.as_string())
+        self.remailer_foo_msgs += 1
         log.debug("Sent %s to %s", outmsg['Subject'], outmsg['To'])
-        return True
+
+    def msg2file(self, inmsg):
+        f = open("/home/pymaster/check.txt", "a")
+        f.write(inmsg.as_string())
+        f.close()
 
     def send_remailer_key(self):
         msg = email.message.Message()
@@ -184,38 +196,10 @@ class MailMessage():
                           % config.get('general', 'shortname'))
         return msg
 
-    def extract_packet(self, msgobj):
-        """-----BEGIN REMAILER MESSAGE-----
-           [packet length ]
-           [message digest]
-           [encoded packet]
-           -----END REMAILER MESSAGE-----
-
-           The function takes a message object and splits its payload into
-           component parts.  These parts are a list of 20 headers and the
-           body.
-        """
-        mailmsg = msgobj.get_payload().split("\n")
-        if ("-----BEGIN REMAILER MESSAGE-----" not in mailmsg or
-            "-----END REMAILER MESSAGE-----" not in mailmsg):
-            raise MailError("No Remailer Message cutmarks")
-        begin = mailmsg.index("-----BEGIN REMAILER MESSAGE-----")
-        if begin > 10:
-            raise MailError("BEGIN cutmark not at top of message")
-        end = mailmsg.index("-----END REMAILER MESSAGE-----")
-        length = int(mailmsg[begin + 1])
-        digest = mailmsg[begin + 2].decode("base64")
-        packet = ''.join(mailmsg[begin + 3:end]).decode("base64")
-        if len(packet) != length:
-            raise MailError("Incorrect packet length")
-        if digest != MD5.new(data=packet).digest():
-            raise MailError("Mixmaster message digest failed")
-        return packet
-
 
 class Pool():
     def __init__(self):
-        self.m = DecodePacket.Mixmaster()
+        self.decode = DecodePacket.Mixmaster()
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
@@ -237,13 +221,13 @@ class Pool():
             if f.startswith("m"):
                 log.debug("Processing file: %s", f)
                 try:
-                    mixobj = self.read_file(fq)
-                except PayloadError, e:
+                    mixobj = self.decode.get_payload(fq)
+                except DecodePacket.ValidationError, e:
                     log.warn("%s: Payload Error: %s", f, e)
                     self.delete(fq)
                     continue
                 try:
-                    msg = self.m.process(mixobj)
+                    msg = self.decode.process(mixobj)
                 except DecodePacket.ValidationError, e:
                     log.warn("%s: Validation Error: %s", f, e)
                     self.delete(fq)
@@ -275,20 +259,6 @@ class Pool():
     def delete(self, fq):
         """Delete files from the Mixmaster Pool."""
         os.remove(fq)
-
-    def read_file(self, filename):
-        f = open(filename, 'rb')
-        packet = f.read()
-        f.close()
-        if len(packet) != 20480:
-            log.warn("Only correctly sized payloads should make it into the "
-                     "Pool.  Somehow this message slipped through.")
-            raise PayloadError("Incorrect Mixmaster packet size")
-        p = DecodePacket.MixPacket()
-        fmt = '@' + ('512s' * 20)
-        p.set_headers(struct.unpack(fmt, packet[0:10240]))
-        p.set_encbody(packet[10240:20480])
-        return p
 
     def pick_files(self):
         """Pick a random subset of filenames in the Pool and return them as a

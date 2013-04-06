@@ -78,8 +78,65 @@ class Mixmaster():
         try:
             self.unpack(packet)
         except DestinationError:
+            log.debug("Re-encoding this message for Random Hop.")
             self.msg = EncodePacket.randhop(packet)
         return self.msg
+
+    def extract_packet(self, msgobj):
+        """-----BEGIN REMAILER MESSAGE-----
+           [packet length ]
+           [message digest]
+           [encoded packet]
+           -----END REMAILER MESSAGE-----
+
+           The function takes a potential remailer message and validates it.
+           Validation comes in two parts:-
+           1) Is it a Mixmaster formatted message?
+           2) Is it a valid Mixmaster message?
+           Failure of the first test is fine; Remailers process non-Mixmaster
+           messages.  Failure of the second part is potentially more evil.  In
+           the end, if all tests are passed, the message is pooled.
+        """
+        mailmsg = msgobj.get_payload().split("\n")
+        if ("-----BEGIN REMAILER MESSAGE-----" not in mailmsg or
+            "-----END REMAILER MESSAGE-----" not in mailmsg):
+            return False
+        begin = mailmsg.index("-----BEGIN REMAILER MESSAGE-----")
+        if begin > 10:
+            # Bounces frequently contain the Remailer messages.  Checking if
+            # the cutmarks are deep in the message is a good test.
+            raise ValidationError("Cutmarks not in top ten lines of payload")
+        end = mailmsg.index("-----END REMAILER MESSAGE-----")
+        if end < begin:
+            raise ValidationError("Reversed cutmarks")
+        length = int(mailmsg[begin + 1])
+        digest = mailmsg[begin + 2].decode("base64")
+        packet = ''.join(mailmsg[begin + 3:end]).decode("base64")
+        if len(packet) != length:
+            raise ValidationError("Incorrect packet length")
+        if digest != MD5.new(data=packet).digest():
+            raise ValidationError("Mixmaster message digest failed")
+        # If processing reaches here, the message is considered a valid
+        # Mixmaster message.
+        f = open(Utils.pool_filename('m'), 'wb')
+        f.write(packet)
+        f.close()
+        return True
+
+    def get_payload(self, filename):
+        f = open(filename, 'rb')
+        packet = f.read()
+        f.close()
+        if len(packet) != 20480:
+            log.warn("Only correctly sized payloads should make it into the "
+                     "Pool.  Somehow this message slipped through.")
+            raise ValidationError("Incorrect packet size in pool")
+        # This is the only place a Mixmaster Packet object is created.
+        packobj = MixPacket()
+        fmt = '@' + ('512s' * 20)
+        packobj.set_headers(struct.unpack(fmt, packet[0:10240]))
+        packobj.set_encbody(packet[10240:20480])
+        return packobj
 
     def packet_decrypt(self, packet):
         """Unpack a received Mixmaster email message header.  The spec calls
