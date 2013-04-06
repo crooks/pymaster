@@ -371,7 +371,7 @@ class Secring(KeyUtils):
         return decrypted_key
 
 
-class PubkeyError(Exception):
+class PubringError(Exception):
     pass
 
 
@@ -379,7 +379,7 @@ class Pubring(KeyUtils):
     def __init__(self):
         pubring = config.get('keys', 'pubring')
         if not os.path.isfile(pubring):
-            raise PubkeyError("%s: Pubring not found" % pubring)
+            raise PubringError("%s: Pubring not found" % pubring)
         self.pubring = pubring
         self.cache = {}
         self.headers = []
@@ -403,7 +403,7 @@ class Pubring(KeyUtils):
             if not name in self.cache:
                 # Give up now, the requested key doesn't exist in this
                 # Pubring.
-                return None
+                raise PubringError("%s: Public Key not found" % name)
         if len(self.cache[name]) == 7:
             # This is a later style Mixmaster key so we can try to validate
             # the dates on it.
@@ -506,7 +506,8 @@ class Pubring(KeyUtils):
                 # conditions apply.
                 pass
             else:
-                raise PubkeyError("Unexpected line in Pubring: %s" % line.rstrip())
+                raise PubringError("Unexpected line in Pubring: %s"
+                                   % line.rstrip())
         f.close()
 
 
