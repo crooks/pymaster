@@ -128,7 +128,6 @@ class EncryptedHeader():
         assert len(self.packet) == 328
         self.des3key = des3key
         self.info = info
-        self.packet = packet
 
 
 class OuterHeader():
@@ -167,11 +166,12 @@ class OuterHeader():
 
 
 class Body():
-    def __init__(self, msgobj):
+    def encode(self, msgobj):
         plain = msgobj.get_payload()
         length = len(plain)
         payload = struct.pack('<L', length)
         payload += self.encode_header(msgobj['To'])
+        payload += struct.pack('B', 0)
         #TODO Somehow the above process needs to be repeated for header lines.
         payload += plain
         payload += Crypto.Random.get_random_bytes(10240 - len(payload))
@@ -268,13 +268,34 @@ def dummy():
     f.close()
 
 
-def exitnode():
+def exitmsg():
+    rem_data = exitnode('pymaster')
+    header = OuterHeader()
+    header.make_outer(rem_data, 1)
+    headers = (header.outer_header +
+               Crypto.Random.get_random_bytes(9728))
+    assert len(headers) == 10240
+    desobj = DES3.new(header.inner.des3key,
+                      DES3.MODE_CBC,
+                      IV=header.inner.info.iv)
+    msg = email.message.Message()
+    msg['To'] = 'steve@mixmin.net'
+    msg.set_payload("Test Message")
+    body = Body()
+    body.encode(msg)
+    payload = desobj.encrypt(body.payload)
+    assert len(payload) == 10240
+    return mixprep(headers + payload)
+
+
+def exitnode(name=None):
     # pubring[0]    Email Address
     # pubring[1]    Key ID (Hex encoded)
     # pubring[2]    Version
     # pubring[3]    Capabilities
     # pubring[4]    Pycrypto Key Object
-    name = chain.randexit()
+    if name is None:
+        name = chain.randexit()
     rem_data = pubring[name]
     log.debug("Selected Exit-node: %s <%s>", name, rem_data[0])
     return rem_data
@@ -297,7 +318,4 @@ if (__name__ == "__main__"):
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
-    rem_name = "banana"
-    rem_data = pubring[rem_name]
-    header = OuterHeader()
-    header.make_outer(rem_data, 1)
+    print exitmsg()
