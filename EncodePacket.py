@@ -241,7 +241,7 @@ def randhop(packet):
 
 
 def dummy():
-    rem_data = exitnode()
+    rem_data = randnode()
     outhead = OuterHeader()
     outhead.make_outer(rem_data, 1)
     header = (outhead.outer_header +
@@ -298,6 +298,19 @@ def exitnode(name=None):
         name = chain.randexit()
     rem_data = pubring[name]
     log.debug("Selected Exit-node: %s <%s>", name, rem_data[0])
+    return rem_data
+
+
+def randnode(name=None):
+    # pubring[0]    Email Address
+    # pubring[1]    Key ID (Hex encoded)
+    # pubring[2]    Version
+    # pubring[3]    Capabilities
+    # pubring[4]    Pycrypto Key Object
+    if name is None:
+        name = chain.randany()
+    rem_data = pubring[name]
+    log.debug("Selected random node: %s <%s>", name, rem_data[0])
     return rem_data
 
 

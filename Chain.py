@@ -35,6 +35,7 @@ class Chain():
         if not os.path.isfile(mlist2):
             raise ChainError("%s: Stats file not found" % mlist2)
         self.mlist2 = mlist2
+        self.shortname = config.get('general', 'shortname')
 
     def _striplist(self, l):
         """Take a list and return the same list with whitespace stripped from
@@ -95,6 +96,20 @@ class Chain():
         if exitnum == 0:
             raise ChainError("No candidate Exit Remailers")
         return exits[self._randint(exitnum - 1)]
+
+
+    def randany(self):
+        """Like randexit but pick any random node, not just exits.
+        """
+        remailers = self.candidates(0, 5999, 0)
+        # Remove the local remailer from the list.  On no occasions
+        # do we want to randomly select the local node.
+        if self.shortname in remailers:
+            remailers.remove(self.shortname)
+        remcount = len(remailers)
+        if remcount == 0:
+            raise ChainError("No candidate remailers")
+        return remailers[self._randint(remcount - 1)]
 
 
     def chain(self, chainstr=None):
@@ -177,3 +192,4 @@ if (__name__ == "__main__"):
 
     c = Chain()
     print c.chain("*, austria, *, *, *")
+    print "Random Node: %s" % c.randany()
