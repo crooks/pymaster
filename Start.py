@@ -51,7 +51,6 @@ class MailMessage():
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
         self.server = config.get('mail', 'server')
-        self.decode = DecodePacket.Mixmaster()
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
                   maildir, self.server)
 
@@ -75,14 +74,18 @@ class MailMessage():
         mailfile = self.inbox.get_file(msgkey)
         msg = email.message_from_file(mailfile)
         mailfile.close()
+        mixmail = DecodePacket.MixMail()
         if msg.is_multipart():
             raise MailError("Message is multipart")
         try:
-            ismix = self.decode.extract_packet(msg)
+            # email2packet returns True if it successfully extracts a
+            # Mixmaster packet from the supplied email object.
+            ismix = mixmail.email2packet(msg)
         except DecodePacket.ValidationError, e:
             log.debug("Invalid Mixmaster message: %s", e)
             return 0
         if ismix:
+            mixmail.packet2pool()
             self.added_to_pool += 1
         else:
             # If this isn't a remailer message, it might be a request for

@@ -38,9 +38,16 @@ handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
 log.addHandler(handler)
 
+mixmail = DecodePacket.MixMail()
 dec = DecodePacket.Mixmaster()
 msg = email.message.Message()
 msg.set_payload(EncodePacket.exitmsg())
-packobj = dec.extract_packet(msg)
-outmsg = dec.process(packobj)
-print outmsg
+ismix = mixmail.extract_packet(msg)
+if ismix:
+    packet = mixmail.get_packet()
+    packetobj = DecodePacket.MixPacket()
+    packetobj.unpack(packet)
+    outmsg = dec.process(packetobj)
+    print outmsg.as_string()
+else:
+    print "Not a Mixmaster message"

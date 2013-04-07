@@ -50,18 +50,98 @@ class DestinationError(Exception):
     pass
 
 
-class MixPacket():
+class MixPacket(object):
+    def unpack(self, packet):
+        """Take an encrypted Mixmaster packet and split it into its component
+           parts: The 20 headers and the payload.
+        """
+        assert len(packet) == 20480
+        fmt = '@' + ('512s' * 20)
+        self.set_headers(struct.unpack(fmt, packet[0:10240]))
+        self.set_encbody(packet[10240:20480])
+
     def set_headers(self, headers):
+        """A list of 20 Mixmaster encrypted headers, each of 512 Bytes.
+        """
+        assert len(headers) == 20
         self.headers = headers
 
     def set_encbody(self, encbody):
+        """The 10240 Byte Mixmaster encrypted payload.
+        """
+        assert len(encbody) == 10240
         self.encbody = encbody
 
     def set_dhead(self, dhead):
+        """The 328 Byte decrypted header section of the top 512 Byte header.
+        """
+        assert len(dhead) == 328
         self.dhead = dhead
 
     def set_dbody(self, dbody):
+        """The decrypted payload.  In the case of an Exit message, this will
+           be plain text.  For intermediates just the outer layer of
+           encryption will be stripped.
+        """
+        assert len(dbody) == 10240
         self.dbody = dbody
+
+
+class MixMail(object):
+    """This class is concerned with taking a Mixmaster email message and
+       converting it into a 20480 Byte Mixmaster packet.
+    """
+    def set_packet(self, packet):
+        self.packet = packet
+
+    def get_packet(self):
+        return self.packet
+
+    def email2packet(self, msgobj):
+        """-----BEGIN REMAILER MESSAGE-----
+           [packet length ]
+           [message digest]
+           [encoded packet]
+           -----END REMAILER MESSAGE-----
+
+           The function takes a potential remailer message and validates it.
+           Validation comes in two parts:-
+           1) Is it a Mixmaster formatted message?
+           2) Is it a valid Mixmaster message?
+           Failure of the first test is fine; Remailers process non-Mixmaster
+           messages.  In this instance, False is returned to indicate this
+           isn't a Mixmaster message.  Failure of the second test suggests
+           this tries to look like a Mixmaster message but fails.  In this
+           instance an Error is raised.
+        """
+        mailmsg = msgobj.get_payload().split("\n")
+        if ("-----BEGIN REMAILER MESSAGE-----" not in mailmsg or
+            "-----END REMAILER MESSAGE-----" not in mailmsg):
+            return False
+        begin = mailmsg.index("-----BEGIN REMAILER MESSAGE-----")
+        if begin > 10:
+            # Bounces frequently contain the Remailer messages.  Checking if
+            # the cutmarks are deep in the message is a good test.
+            raise ValidationError("Cutmarks not in top ten lines of payload")
+        end = mailmsg.index("-----END REMAILER MESSAGE-----")
+        if end < begin:
+            raise ValidationError("Reversed cutmarks")
+        length = int(mailmsg[begin + 1])
+        digest = mailmsg[begin + 2].decode("base64")
+        packet = ''.join(mailmsg[begin + 3:end]).decode("base64")
+        if len(packet) != length:
+            raise ValidationError("Incorrect packet length")
+        if digest != MD5.new(data=packet).digest():
+            raise ValidationError("Mixmaster message digest failed")
+        self.set_packet(packet)
+        return True
+
+    def packet2pool(self):
+        """Write a Mixmaster binary packet to the pool.
+        """
+        f = open(Utils.pool_filename('m'), 'wb')
+        f.write(self.get_packet())
+        f.close()
 
 
 class Mixmaster():
@@ -84,47 +164,6 @@ class Mixmaster():
             self.msg = EncodePacket.randhop(packet)
         return self.msg
 
-    def extract_packet(self, msgobj):
-        """-----BEGIN REMAILER MESSAGE-----
-           [packet length ]
-           [message digest]
-           [encoded packet]
-           -----END REMAILER MESSAGE-----
-
-           The function takes a potential remailer message and validates it.
-           Validation comes in two parts:-
-           1) Is it a Mixmaster formatted message?
-           2) Is it a valid Mixmaster message?
-           Failure of the first test is fine; Remailers process non-Mixmaster
-           messages.  Failure of the second part is potentially more evil.  In
-           the end, if all tests are passed, the message is pooled.
-        """
-        mailmsg = msgobj.get_payload().split("\n")
-        if ("-----BEGIN REMAILER MESSAGE-----" not in mailmsg or
-            "-----END REMAILER MESSAGE-----" not in mailmsg):
-            return False
-        begin = mailmsg.index("-----BEGIN REMAILER MESSAGE-----")
-        if begin > 10:
-            # Bounces frequently contain the Remailer messages.  Checking if
-            # the cutmarks are deep in the message is a good test.
-            raise ValidationError("Cutmarks not in top ten lines of payload")
-        end = mailmsg.index("-----END REMAILER MESSAGE-----")
-        if end < begin:
-            raise ValidationError("Reversed cutmarks")
-        length = int(mailmsg[begin + 1])
-        digest = mailmsg[begin + 2].decode("base64")
-        packet = ''.join(mailmsg[begin + 3:end]).decode("base64")
-        if len(packet) != length:
-            raise ValidationError("Incorrect packet length")
-        if digest != MD5.new(data=packet).digest():
-            raise ValidationError("Mixmaster message digest failed")
-        # If processing reaches here, the message is considered a valid
-        # Mixmaster message.
-        f = open(Utils.pool_filename('m'), 'wb')
-        f.write(packet)
-        f.close()
-        return True
-
     def get_payload(self, filename):
         f = open(filename, 'rb')
         packet = f.read()
@@ -135,9 +174,7 @@ class Mixmaster():
             raise ValidationError("Incorrect packet size in pool")
         # This is the only place a Mixmaster Packet object is created.
         packobj = MixPacket()
-        fmt = '@' + ('512s' * 20)
-        packobj.set_headers(struct.unpack(fmt, packet[0:10240]))
-        packobj.set_encbody(packet[10240:20480])
+        packobj.unpack(packet)
         return packobj
 
     def packet_decrypt(self, packet):
