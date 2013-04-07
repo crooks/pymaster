@@ -66,8 +66,10 @@ class MixPacket():
 
 class Mixmaster():
     def __init__(self):
-        self.destalw = ConfFiles(config.get('etc', 'dest_alw'), 'dest_alw')
-        self.destblk = ConfFiles(config.get('etc', 'dest_blk'), 'dest_blk')
+        self.destalw = ConfFiles(config.get('etc', 'dest_alw'))
+        self.destblk = ConfFiles(config.get('etc', 'dest_blk'))
+        self.headalw = ConfFiles(config.get('etc', 'head_alw'))
+        self.headblk = ConfFiles(config.get('etc', 'head_blk'))
         self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
         self.middleman = config.getboolean('general', 'middleman')
 
@@ -391,11 +393,11 @@ class Mixmaster():
         as a Middleman, raise a DestinationError and randhop it.
         """
         for h in self.unpad(heads):
+            alw = self.headalw.hit(h)
+            blk = self.headblk.hit(h)
             head, content = h.split(": ", 1)
-            alw = self.headalw.hit(head)
-            blk = self.headblk.hit(head)
             if alw and not blk:
-                self.msg[head] = content
+                self.msg[head.strip()] = content.strip()
             elif blk and not alw:
                 log.debug("%s: Header explicitly blocked.", head)
             elif blk and alw:
@@ -410,13 +412,13 @@ class Mixmaster():
                              "configuration dictates that block takes "
                              "priority", head)
             else:
-                self.msg[head] = content
+                self.msg[head.strip()] = content.strip()
 
 
 class ConfFiles():
-    def __init__(self, filename, name):
+    def __init__(self, filename):
         # mtime is set to the Modified date on the file in "since Epoch"
-        # format.  Setting it to zero ensures the file is read on the first
+        # format.  Setting it to zero ensures the file i`s read on the first
         # pass.
         mtime = 0
         self.mtime = mtime
