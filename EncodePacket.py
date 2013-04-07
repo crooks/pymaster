@@ -167,13 +167,12 @@ class OuterHeader():
 
 class Body():
     def encode(self, msgobj):
-        plain = msgobj.get_payload()
-        length = len(plain)
-        payload = struct.pack('<L', length)
-        payload += self.encode_header(msgobj['To'])
+        payload = self.encode_header(msgobj['To'])
         payload += struct.pack('B', 0)
         #TODO Somehow the above process needs to be repeated for header lines.
-        payload += plain
+        payload += msgobj.get_payload()
+        length = struct.pack('<I', len(payload))
+        payload = length + payload
         payload += Crypto.Random.get_random_bytes(10240 - len(payload))
         assert len(payload) == 10240
         self.payload = payload
