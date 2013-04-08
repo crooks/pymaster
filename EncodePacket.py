@@ -38,7 +38,7 @@ import Utils
 log = logging.getLogger("Pymaster.EncodePacket")
 
 
-class ValidationError(Exception):
+class EncodeError(Exception):
     pass
 
 
@@ -167,9 +167,16 @@ class OuterHeader():
 
 class Body():
     def encode(self, msgobj):
-        payload = self.encode_header(msgobj['To'])
-        payload += struct.pack('B', 0)
-        #TODO Somehow the above process needs to be repeated for header lines.
+        if 'Dests' in msgobj:
+           dests = msgobj['Dests'].split(",")
+        else:
+            raise EncodeError("No destinations specified")
+        payload = self.encode_header(dests)
+        heads = []
+        for k in msgobj.keys():
+            if not k == 'Dests':
+                heads.append("%s: %s" % (k, msgobj[k]))
+        payload += self.encode_header(heads)
         payload += msgobj.get_payload()
         length = struct.pack('<I', len(payload))
         payload = length + payload
@@ -177,22 +184,21 @@ class Body():
         assert len(payload) == 10240
         self.payload = payload
 
-    def encode_header(self, header):
-        """This function takes a standard comma-separated header, such as the
-        To: header and converts it into the format required by Mixmaster,
-        which is:
-        Number of destination fields   [        1 byte]
-        Destination fields             [ 80 bytes each]
-        Number of header line fields   [        1 byte]
-        Header lines fields            [ 80 bytes each]
+    def encode_header(self, items):
+        """This function takes a list of destinations or headers and converts
+           them into the format required by Mixmaster, which is:
+                Number of destination fields   [        1 byte]
+                Destination fields             [ 80 bytes each]
+                Number of header line fields   [        1 byte]
+                Header lines fields            [ 80 bytes each]
         """
-        fields = header.split(',')
         # The return string begins with the single-Byte count of the fields.
-        headstr = struct.pack('B', len(fields))
-        for field in fields:
-            field = field.strip()
-            padlen = 80 - len(field)
-            headstr += field + ("\x00" * padlen)
+        headstr = struct.pack('B', len(items))
+        for item in items:
+            item = item.strip()
+            padlen = 80 - len(item)
+            headstr += item + ("\x00" * padlen)
+            print "Headstring: %s, Length=%s" % (headstr, len(headstr))
         return headstr
 
 
@@ -278,7 +284,9 @@ def exitmsg():
                       DES3.MODE_CBC,
                       IV=header.inner.info.iv)
     msg = email.message.Message()
-    msg['To'] = 'steve@mixmin.net'
+    msg['Dests'] = 'steve@mixmin.net'
+    msg['Cc'] = 'mail2news@mixmin.net'
+    msg['Newsgroups'] = 'news.group'
     msg.set_payload("Test Message")
     body = Body()
     body.encode(msg)
