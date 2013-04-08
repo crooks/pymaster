@@ -42,7 +42,7 @@ mixmail = DecodePacket.MixMail()
 dec = DecodePacket.Mixmaster()
 msg = email.message.Message()
 msg.set_payload(EncodePacket.exitmsg())
-ismix = mixmail.extract_packet(msg)
+ismix = mixmail.email2packet(msg)
 if ismix:
     packet = mixmail.get_packet()
     packetobj = DecodePacket.MixPacket()

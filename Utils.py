@@ -73,7 +73,7 @@ def file2regex(filename):
         if line.startswith("/") and line.endswith("/"):
             reglines.append(line[1:-1])
         else:
-            listlines.append(line)
+            listlines.append(line.rstrip())
     if len(reglines) == 0:
         # No valid regex entires exist in the file.
         compiled = False

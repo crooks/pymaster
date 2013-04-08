@@ -288,7 +288,7 @@ class Mixmaster():
                 raise ValidationError("No acceptable destinations for this "
                                       "message")
             desthead = ','.join(dests)
-            self.msg.add_header("To", desthead)
+            self.msg["To"] = desthead
             # At this point we have established a list of acceptable
             # email destinations.
             sbyte = ebyte
