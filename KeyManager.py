@@ -381,14 +381,7 @@ class Pubring(KeyUtils):
         if not os.path.isfile(pubring):
             raise PubringError("%s: Pubring not found" % pubring)
         self.pubring = pubring
-        self.cache = {}
-        self.headers = []
-        self.remailer_addresses = []
         log.info("Initialized Pubring. Path=%s", pubring)
-
-    def __setitem__(self, name, headtup):
-        assert len(headtup) == 3
-        self.cache[name] = headtup
 
     def __getitem__(self, name):
         # header[0] Email Address
@@ -444,7 +437,13 @@ class Pubring(KeyUtils):
         """For a given remailer shortname, try and find an email address and a
         valid key.  If no valid key is found, return None instead of the key.
         """
-        self.headers = []
+        cache = {}
+        # Headers is a list of the remailer header lines found in the Pubring.
+        # This is used to list known remailers in remailer-conf replies.
+        headers = []
+        # The following two are shortcut lists of addresses and names.
+        addresses = []
+        names = []
         f = open(self.pubring, 'r')
         # Bool to indicate when an actual key is being read.  Set True by
         # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
@@ -486,11 +485,12 @@ class Pubring(KeyUtils):
                     keyid == MD5.new(data=key[2:258]).hexdigest() and
                     keyid == header[2]):
                     # We want this key please!
-                    self.headers.append(headline)
-                    self.remailer_addresses.append(header[1])
+                    headers.append(headline)
+                    addresses.append(header[1])
                     name = header.pop(0)
+                    names.append(name)
                     header.insert(4, self.pub_construct(key))
-                    self.cache[name] = tuple(header)
+                    cache[name] = tuple(header)
                     gothead = False
                     inkey = False
             elif gothead and inkey:
@@ -509,6 +509,10 @@ class Pubring(KeyUtils):
                 raise PubringError("Unexpected line in Pubring: %s"
                                    % line.rstrip())
         f.close()
+        self.cache = cache
+        self.headers = headers
+        self.addresses = addresses
+        self.names = names
 
 
 log = logging.getLogger("Pymaster.%s" % __name__)
@@ -521,7 +525,8 @@ if (__name__ == "__main__"):
     s = Secring()
     p = Pubring()
     p.read_pubring()
-    remailer = p['banana']
+    remailer = p['pymaster']
+    print p.names
     if remailer is not None:
         print remailer[0], remailer[1]
         print s[remailer[1]]

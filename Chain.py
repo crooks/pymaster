@@ -30,12 +30,13 @@ class ChainError(Exception):
     pass
 
 class Chain():
-    def __init__(self):
+    def __init__(self, pubring):
         mlist2 = config.get('keys', 'mlist2')
         if not os.path.isfile(mlist2):
             raise ChainError("%s: Stats file not found" % mlist2)
         self.mlist2 = mlist2
         self.shortname = config.get('general', 'shortname')
+        self.pubring = pubring
 
     def _striplist(self, l):
         """Take a list and return the same list with whitespace stripped from
@@ -80,7 +81,13 @@ class Chain():
                 opts = line[57:72]
                 if exit and 'D' in opts:
                     continue
-                remailers.append(name)
+                # This check ensures there is a public key corresponding to
+                # the candidate.  If not, we can't encrypt to it.
+                if name in pubring.names:
+                    remailers.append(name)
+                else:
+                    log.warn("%s: In stats but not Public Key available.",
+                             name)
         f.close()
         return remailers
 
@@ -189,7 +196,9 @@ if (__name__ == "__main__"):
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
-
-    c = Chain()
+    import KeyManager
+    pubring = KeyManager.Pubring()
+    pubring.read_pubring()
+    c = Chain(pubring)
     print c.chain("*, austria, *, *, *")
     print "Random Node: %s" % c.randany()

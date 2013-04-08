@@ -328,7 +328,8 @@ def pubring_headers():
 
 
 pubring = KeyManager.Pubring()
-chain = Chain.Chain()
+pubring.read_pubring()
+chain = Chain.Chain(pubring)
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -337,5 +338,4 @@ if (__name__ == "__main__"):
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
-
-    print exitmsg()
+    print pubring.names
