@@ -27,6 +27,7 @@ import email
 import timing
 import DecodePacket
 import EncodePacket
+import KeyManager
 import Utils
 from Config import config
 
@@ -38,16 +39,20 @@ handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
 log.addHandler(handler)
 
+pubring = KeyManager.Pubring()
+secring = KeyManager.Secring()
 mixmail = DecodePacket.MixMail()
-dec = DecodePacket.Mixmaster()
+mixpacket = DecodePacket.MixPacket()
+decode = DecodePacket.Mixmaster(secring)
+encode = EncodePacket.Mixmaster(pubring)
+
 msg = email.message.Message()
-msg.set_payload(EncodePacket.exitmsg())
+msg.set_payload(encode.exitmsg())
 ismix = mixmail.email2packet(msg)
 if ismix:
     packet = mixmail.get_packet()
-    packetobj = DecodePacket.MixPacket()
-    packetobj.unpack(packet)
-    outmsg = dec.process(packetobj)
+    mixpacket.unpack(packet)
+    outmsg = decode.process(mixpacket)
     print outmsg.as_string()
 else:
     print "Not a Mixmaster message"
