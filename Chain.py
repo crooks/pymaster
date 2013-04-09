@@ -37,6 +37,7 @@ class Chain():
         self.mlist2 = mlist2
         self.shortname = config.get('general', 'shortname')
         self.pubring = pubring
+        log.info("Chain handler initialised. Stats=%s", mlist2)
 
     def _striplist(self, l):
         """Take a list and return the same list with whitespace stripped from
@@ -187,6 +188,7 @@ class Chain():
         return chainlist
 
 
+log = logging.getLogger("Pymaster.%s" % __name__)
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
