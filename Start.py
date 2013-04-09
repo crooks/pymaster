@@ -62,7 +62,10 @@ class MailMessage():
         self.remailer_foo_msgs = 0
         self.failed_msgs = 0
         for k in messages:
-            self.mail2pool(k)
+            try:
+                self.mail2pool(k)
+            except MailError, e:
+                log.info("Mail Error: %s", e)
             self.inbox.remove(k)
         log.info("Mail processing complete. Processed=%s, Pooled=%s, Text=%s, Failed=%s",
                   len(messages), self.added_to_pool, self.remailer_foo_msgs,
@@ -75,6 +78,12 @@ class MailMessage():
         msg = email.message_from_file(mailfile)
         mailfile.close()
         mixmail = DecodePacket.MixMail()
+        name, addy = email.utils.parseaddr(msg['From'])
+        if addy.lower().startswith("mailer-daemon"):
+            f = open('/home/pymaster/bounce.txt', 'a')
+            f.write(msg.as_string())
+            f.close()
+            raise MailError("Message from mailer-daemon")
         if msg.is_multipart():
             raise MailError("Message is multipart")
         try:
@@ -116,6 +125,10 @@ class MailMessage():
             outmsg = self.send_remailer_help()
         elif sub == 'remailer-adminkey':
             outmsg = self.send_remailer_adminkey()
+        elif sub == 'remailer-stats':
+            #TODO Not yet implemented remailer-stats
+            self.remailer_foo_msgs += 1
+            return 0
         else:
             log.warn("%s: No programmed response for this Subject", sub)
             self.msg2file(inmsg)
