@@ -145,13 +145,14 @@ class MixMail(object):
 
 
 class Mixmaster():
-    def __init__(self):
+    def __init__(self, secring):
         self.destalw = ConfFiles(config.get('etc', 'dest_alw'))
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'))
         self.headalw = ConfFiles(config.get('etc', 'head_alw'))
         self.headblk = ConfFiles(config.get('etc', 'head_blk'))
         self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
         self.middleman = config.getboolean('general', 'middleman')
+        self.secring = secring
 
     def process(self, packet):
         self.msg = email.message.Message()
@@ -198,7 +199,7 @@ class Mixmaster():
         keyid = keyid.encode("hex")
         log.debug("Message is encrypted to key: %s", keyid)
         # Use the session key to decrypt the 3DES Symmetric key
-        seckey = secring[keyid]
+        seckey = self.secring[keyid]
         if seckey is None:
             raise ValidationError("Secret Key not found")
         pkcs1 = PKCS1_v1_5.new(seckey)
@@ -482,7 +483,6 @@ class ConfFiles():
 
 
 log = logging.getLogger("Pymaster.%s" % __name__)
-secring = KeyManager.Secring()
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -491,3 +491,4 @@ if (__name__ == "__main__"):
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
+    secring = KeyManager.Secring()

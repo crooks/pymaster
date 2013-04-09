@@ -33,6 +33,7 @@ from Crypto.Random import random
 import timing
 import DecodePacket
 import EncodePacket
+import KeyManager
 import Utils
 
 
@@ -214,8 +215,8 @@ class MailMessage():
 
 
 class Pool():
-    def __init__(self):
-        self.decode = DecodePacket.Mixmaster()
+    def __init__(self, secring):
+        self.decode = DecodePacket.Mixmaster(secring)
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
@@ -312,8 +313,10 @@ if (__name__ == "__main__"):
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
+    pubring = KeyManager.Pubring()
+    secring = KeyManager.Secring()
     mail = MailMessage()
-    pool = Pool()
+    pool = Pool(secring)
     sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:
         mail.iterate_mailbox()
