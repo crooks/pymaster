@@ -48,10 +48,11 @@ class PayloadError(Exception):
 
 
 class MailMessage():
-    def __init__(self):
+    def __init__(self, pubring):
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
         self.server = config.get('mail', 'server')
+        self.pubring = pubring
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
                   maildir, self.server)
 
@@ -178,7 +179,7 @@ class MailMessage():
         #TODO Dest Blocks
         payload += '\n%s\n\n' % Utils.capstring()
         payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
-        for h in EncodePacket.pubring_headers():
+        for h in self.pubring.headers():
             payload += h + "\n"
         msg.set_payload(payload)
         msg["Subject"] = ("Capabilities of the %s remailer"
@@ -315,7 +316,7 @@ if (__name__ == "__main__"):
 
     pubring = KeyManager.Pubring()
     secring = KeyManager.Secring()
-    mail = MailMessage()
+    mail = MailMessage(pubring)
     pool = Pool(secring)
     sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:

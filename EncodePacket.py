@@ -321,12 +321,6 @@ def randnode(name=None):
     return rem_data
 
 
-def pubring_headers():
-    if len(pubring.headers) == 0:
-        pubring.read_pubring()
-    return pubring.headers
-
-
 pubring = KeyManager.Pubring()
 pubring.read_pubring()
 chain = Chain.Chain(pubring)

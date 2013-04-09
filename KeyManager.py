@@ -338,7 +338,7 @@ class Secring(KeyUtils):
                                  len(plainkey))
                 elif keyid == MD5.new(data=plainkey[2:258]).hexdigest():
                     keyobj = self.sec_construct(plainkey)
-                    log.debug("Cached valid secret key: %s" % keyid)
+                    log.info("Cached valid secret key: %s" % keyid)
                     # The cache contains three objects: The key, the expiration
                     # date of the key and the grace period beyond expiration.
                     self.cache[keyid] = (keyobj, expires,
@@ -377,11 +377,12 @@ class PubringError(Exception):
 
 class Pubring(KeyUtils):
     def __init__(self):
-        pubring = config.get('keys', 'pubring')
-        if not os.path.isfile(pubring):
+        keyfile = config.get('keys', 'pubring')
+        if not os.path.isfile(keyfile):
             raise PubringError("%s: Pubring not found" % pubring)
-        self.pubring = pubring
-        log.info("Initialized Pubring. Path=%s", pubring)
+        self.keyfile = keyfile
+        self.read_pubring()
+        log.info("Initialized Pubring. Path=%s, Keys=%s", keyfile, len(self.cache))
 
     def __getitem__(self, name):
         # header[0] Email Address
@@ -444,7 +445,7 @@ class Pubring(KeyUtils):
         # The following two are shortcut lists of addresses and names.
         addresses = []
         names = []
-        f = open(self.pubring, 'r')
+        f = open(self.keyfile, 'r')
         # Bool to indicate when an actual key is being read.  Set True by
         # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
         inkey = False
@@ -524,7 +525,6 @@ if (__name__ == "__main__"):
     log.info("Running Pymaster as %s", __name__)
     s = Secring()
     p = Pubring()
-    p.read_pubring()
     remailer = p['pymaster']
     print p.names
     if remailer is not None:
