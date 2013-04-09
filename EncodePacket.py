@@ -35,9 +35,6 @@ import KeyManager
 import Utils
 
 
-log = logging.getLogger("Pymaster.EncodePacket")
-
-
 class EncodeError(Exception):
     pass
 
@@ -198,9 +195,93 @@ class Body():
             item = item.strip()
             padlen = 80 - len(item)
             headstr += item + ("\x00" * padlen)
-            print "Headstring: %s, Length=%s" % (headstr, len(headstr))
         return headstr
 
+
+class Mixmaster(object):
+    def __init__(self, pubring):
+        self.pubring = pubring
+        self.chain = Chain.Chain(pubring)
+
+    def dummy(self):
+        rem_data = self.randnode()
+        outhead = OuterHeader()
+        outhead.make_outer(rem_data, 1)
+        header = (outhead.outer_header +
+                  Crypto.Random.get_random_bytes(9728))
+        assert len(header) == 10240
+        # Number of Destinations (1)
+        payload = struct.pack("B", 1)
+        # Idenitfy this as a Dummy message
+        payload += "null:" + ("\x00" * 75)
+        # Number of Headers (None in this instance)
+        payload += struct.pack("B", 0)
+        # pad fake payload to 10240 Bytes
+        payload += Crypto.Random.get_random_bytes(10158)
+        desobj = DES3.new(outhead.inner.des3key,
+                          DES3.MODE_CBC,
+                          IV=outhead.inner.info.iv)
+        payload = desobj.encrypt(payload)
+        assert len(payload) == 10240
+        msgobj = email.message.Message()
+        msgobj.add_header('To', rem_data[0])
+        msgobj.set_payload(mixprep(header + payload))
+        f = open(Utils.pool_filename('o'), 'w')
+        f.write(msgobj.as_string())
+        f.close()
+
+    def randhop(self, packet):
+        rem_data = self.randnode(exit=True)
+        header = OuterHeader()
+        header.make_outer(rem_data, 1)
+        payload = (header.outer_header +
+                   Crypto.Random.get_random_bytes(9728))
+        assert len(payload) == 10240
+        desobj = DES3.new(header.inner.des3key,
+                          DES3.MODE_CBC,
+                          IV=header.inner.info.iv)
+        payload += desobj.encrypt(packet.dbody)
+        assert len(payload) == 20480
+        msgobj = email.message.Message()
+        msgobj.add_header('To', rem_data[0])
+        msgobj.set_payload(mixprep(payload))
+        return msgobj
+
+    def exitmsg(self):
+        rem_data = self.randnode(name='pymaster')
+        header = OuterHeader()
+        header.make_outer(rem_data, 1)
+        headers = (header.outer_header +
+                   Crypto.Random.get_random_bytes(9728))
+        assert len(headers) == 10240
+        desobj = DES3.new(header.inner.des3key,
+                          DES3.MODE_CBC,
+                          IV=header.inner.info.iv)
+        msg = email.message.Message()
+        msg['Dests'] = 'steve@mixmin.net'
+        msg['Cc'] = 'mail2news@mixmin.net'
+        msg['Newsgroups'] = 'news.group'
+        msg.set_payload("Test Message")
+        body = Body()
+        body.encode(msg)
+        payload = desobj.encrypt(body.payload)
+        assert len(payload) == 10240
+        return mixprep(headers + payload)
+
+    def randnode(self, name=None, exit=False):
+        # pubring[0]    Email Address
+        # pubring[1]    Key ID (Hex encoded)
+        # pubring[2]    Version
+        # pubring[3]    Capabilities
+        # pubring[4]    Pycrypto Key Object
+        if name is None:
+            if exit:
+                name = self.chain.randexit()
+            else:
+                name = self.chain.randany()
+        rem_data = self.pubring[name]
+        log.debug("Selected random node: %s <%s>", name, rem_data[0])
+        return rem_data
 
 def mixprep(binary):
     """Take a binary string, encode it as Base64 and wrap it to lines of
@@ -227,103 +308,7 @@ def mixprep(binary):
     return header + payload
 
 
-def randhop(packet):
-    rem_data = exitnode()
-    header = OuterHeader()
-    header.make_outer(rem_data, 1)
-    payload = (header.outer_header +
-               Crypto.Random.get_random_bytes(9728))
-    assert len(payload) == 10240
-    desobj = DES3.new(header.inner.des3key,
-                      DES3.MODE_CBC,
-                      IV=header.inner.info.iv)
-    payload += desobj.encrypt(packet.dbody)
-    assert len(payload) == 20480
-    msgobj = email.message.Message()
-    msgobj.add_header('To', rem_data[0])
-    msgobj.set_payload(mixprep(payload))
-    return msgobj
-
-
-def dummy():
-    rem_data = randnode()
-    outhead = OuterHeader()
-    outhead.make_outer(rem_data, 1)
-    header = (outhead.outer_header +
-              Crypto.Random.get_random_bytes(9728))
-    assert len(header) == 10240
-    # Number of Destinations (1)
-    payload = struct.pack("B", 1)
-    # Idenitfy this as a Dummy message
-    payload += "null:" + ("\x00" * 75)
-    # Number of Headers (None in this instance)
-    payload += struct.pack("B", 0)
-    # pad fake payload to 10240 Bytes
-    payload += Crypto.Random.get_random_bytes(10158)
-    desobj = DES3.new(outhead.inner.des3key,
-                      DES3.MODE_CBC,
-                      IV=outhead.inner.info.iv)
-    payload = desobj.encrypt(payload)
-    assert len(payload) == 10240
-    msgobj = email.message.Message()
-    msgobj.add_header('To', rem_data[0])
-    msgobj.set_payload(mixprep(header + payload))
-    f = open(Utils.pool_filename('o'), 'w')
-    f.write(msgobj.as_string())
-    f.close()
-
-
-def exitmsg():
-    rem_data = exitnode('pymaster')
-    header = OuterHeader()
-    header.make_outer(rem_data, 1)
-    headers = (header.outer_header +
-               Crypto.Random.get_random_bytes(9728))
-    assert len(headers) == 10240
-    desobj = DES3.new(header.inner.des3key,
-                      DES3.MODE_CBC,
-                      IV=header.inner.info.iv)
-    msg = email.message.Message()
-    msg['Dests'] = 'steve@mixmin.net'
-    msg['Cc'] = 'mail2news@mixmin.net'
-    msg['Newsgroups'] = 'news.group'
-    msg.set_payload("Test Message")
-    body = Body()
-    body.encode(msg)
-    payload = desobj.encrypt(body.payload)
-    assert len(payload) == 10240
-    return mixprep(headers + payload)
-
-
-def exitnode(name=None):
-    # pubring[0]    Email Address
-    # pubring[1]    Key ID (Hex encoded)
-    # pubring[2]    Version
-    # pubring[3]    Capabilities
-    # pubring[4]    Pycrypto Key Object
-    if name is None:
-        name = chain.randexit()
-    rem_data = pubring[name]
-    log.debug("Selected Exit-node: %s <%s>", name, rem_data[0])
-    return rem_data
-
-
-def randnode(name=None):
-    # pubring[0]    Email Address
-    # pubring[1]    Key ID (Hex encoded)
-    # pubring[2]    Version
-    # pubring[3]    Capabilities
-    # pubring[4]    Pycrypto Key Object
-    if name is None:
-        name = chain.randany()
-    rem_data = pubring[name]
-    log.debug("Selected random node: %s <%s>", name, rem_data[0])
-    return rem_data
-
-
-pubring = KeyManager.Pubring()
-pubring.read_pubring()
-chain = Chain.Chain(pubring)
+log = logging.getLogger("Pymaster.%s" % __name__)
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -332,4 +317,5 @@ if (__name__ == "__main__"):
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
+    pubring = KeyManager.Pubring()
     print pubring.names

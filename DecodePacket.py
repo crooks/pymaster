@@ -158,11 +158,7 @@ class Mixmaster():
         self.msg = email.message.Message()
         # Decrypt the 328 byte Encrypted Header
         self.packet_decrypt(packet)
-        try:
-            self.unpack(packet)
-        except DestinationError:
-            log.debug("Re-encoding this message for Random Hop.")
-            self.msg = EncodePacket.randhop(packet)
+        self.unpack(packet)
         return self.msg
 
     def get_payload(self, filename):

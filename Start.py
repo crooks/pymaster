@@ -216,8 +216,9 @@ class MailMessage():
 
 
 class Pool():
-    def __init__(self, secring):
-        self.decode = DecodePacket.Mixmaster(secring)
+    def __init__(self, pubring, secring):
+        encode = EncodePacket.Mixmaster(pubring)
+        decode = DecodePacket.Mixmaster(secring)
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
@@ -228,6 +229,8 @@ class Pool():
                  self.pooldir, self.interval, self.rate, self.size)
         log.debug("First pool process at %s",
                   timing.timestamp(self.next_process))
+        self.encode = encode
+        self.decode = decode
 
     def process(self):
         if timing.now() < self.next_process:
@@ -250,6 +253,9 @@ class Pool():
                     log.warn("%s: Validation Error: %s", f, e)
                     self.delete(fq)
                     continue
+                except DecodePacket.DestinationError:
+                    log.debug("Re-encoding this message for Random Hop.")
+                    self.msg = self.encode.randhop(mixobj)
                 except DecodePacket.DummyMessage, e:
                     log.debug("%s: Dummy message", f)
                     self.delete(fq)
@@ -268,7 +274,7 @@ class Pool():
         # OUtbound dummy message generation.
         if random.randint(0, 100) < config.get('pool', 'outdummy'):
             log.debug("Generating dummy message.")
-            EncodePacket.dummy()
+            self.encode.dummy()
         # Return the time for the next pool processing.
         self.next_process = timing.dhms_future(self.interval)
         log.debug("Next pool process at %s",
@@ -317,7 +323,7 @@ if (__name__ == "__main__"):
     pubring = KeyManager.Pubring()
     secring = KeyManager.Secring()
     mail = MailMessage(pubring)
-    pool = Pool(secring)
+    pool = Pool(pubring, secring)
     sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:
         mail.iterate_mailbox()
