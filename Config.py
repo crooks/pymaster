@@ -99,14 +99,13 @@ if 'PYMASTER' in os.environ:
 else:
     configfile = os.path.join(homedir, '.pymasterrc')
 
-if not config.has_option('mail', 'mid'):
-    middomain = config.get('mail', 'address').split('@', 1)[1]
-    config.set('mail', 'mid', middomain)
-
 config.add_section('paths')
 if not WRITE_DEFAULT_CONFIG and os.path.isfile(configfile):
     config.read(configfile)
 
+local, domain = config.get('mail', 'address').split("@", 1)
+makeopt('mail', 'mid', domain)
+makeopt('mail', 'return_path', '%s+bounce@%s' % (local, domain))
 # We have to set basedir _after_ reading the config file because
 # other paths need to default to subpaths of it.
 basedir = makepath(homedir, 'pymaster', 'basedir')
