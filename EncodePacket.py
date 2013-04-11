@@ -40,26 +40,31 @@ class EncodeError(Exception):
 
 
 class PacketInfo():
-    def intermediate_hop(self, nexthop):
+    def intermediate_hop(self, nextaddy):
         """Packet type 0 (intermediate hop):
            19 Initialization vectors      [152 bytes]
            Remailer address               [ 80 bytes]
         """
-        ivs = []
-        for iv in range(18):
-            ivs.append(Crypto.Random.get_random_bytes(8))
-        self.addy = nexthop
+        ivstr = Crypto.Random.get_random_bytes(152)
+        fmt = "8s" * 19
+        ivs = struct.unpack(fmt, ivstr)
+        padaddy = nextaddy + ('\x00' * (80 - len(nextaddy)))
+        self.nextaddy = nextaddy
         self.ivs = ivs
+        return struct.pack('@152s80s', ivstr, padaddy)
 
     def final_hop(self):
         """Packet type 1 (final hop):
            Message ID                     [ 16 bytes]
            Initialization vector          [  8 bytes]
         """
-        self.messageid = Crypto.Random.get_random_bytes(16)
-        self.iv = Crypto.Random.get_random_bytes(8)
+        messageid = Crypto.Random.get_random_bytes(16)
+        iv = Crypto.Random.get_random_bytes(8)
+        self.messageid = messageid
+        self.iv = iv
+        return struct.pack('@16s8s', messageid, iv)
 
-    def final_partial(self, chunknum, numchunks):
+    def final_partial(self):
         """Packet type 2 (final hop, partial message):
            Chunk number                   [  1 byte ]
            Number of chunks               [  1 byte ]
@@ -72,8 +77,13 @@ class PacketInfo():
         self.iv = Crypto.Random.get_random_bytes(8)
 
 
-class EncryptedHeader():
-    def make_header(self, odes3key, oiv, msg_type):
+class InnerHeader():
+    def __init__(self, rem_data, msgtype):
+        self.pktinfo = PacketInfo()
+        self.rem_data = rem_data
+        self.msgtype = msgtype
+
+    def make_header(self):
         """Packet ID                            [ 16 bytes]
            Triple-DES key                       [ 24 bytes]
            Packet type identifier               [  1 byte ]
@@ -84,47 +94,34 @@ class EncryptedHeader():
         """
         packetid = Crypto.Random.get_random_bytes(16)
         des3key = Crypto.Random.get_random_bytes(24)
-        ts_sig = struct.pack('BBBBB', 48, 48, 48, 48, 0)
-        timestamp = ts_sig + struct.pack('<H', timing.epoch_days())
-        info = PacketInfo()
-        if msg_type ==0:
-            info.intermediate_hop(addy)
-            packet = struct.pack("@16s24sB152s80s7s",
-                                 packetid,
-                                 des3key,
-                                 msg_type,
-                                 ''.join(info.ivs),
-                                 info.addy,
-                                 timestamp)
-        if msg_type == 1:
-            info.final_hop()
-            packet = struct.pack("@16s24sB16s8s7s",
-                                 packetid,
-                                 des3key,
-                                 msg_type,
-                                 info.messageid,
-                                 info.iv,
-                                 timestamp)
-        if msg_type == 2:
-            info.final_partial()
-            packet = struct.pack("@16s24sBBB16s8s7s",
-                                 packetid,
-                                 des3key,
-                                 msg_type,
-                                 info.chunknum,
-                                 info.numchunks,
-                                 info.messageid,
-                                 info.iv,
-                                 timestamp)
-        digest = MD5.new(data=packet).digest()
-        packet += digest
-        pad = 328 - len(packet)
-        packet += Crypto.Random.get_random_bytes(pad)
-        desobj = DES3.new(odes3key, DES3.MODE_CBC, IV=oiv)
-        self.packet = desobj.encrypt(packet)
-        assert len(self.packet) == 328
+        timestamp = "0000\x00" + struct.pack('<H', timing.epoch_days())
+        if self.msgtype == 0:
+            pktinfo = self.pktinfo.intermediate_hop(self.rem_data[5])
+        elif self.msgtype == 1:
+            pktinfo = self.pktinfo.final_hop()
+        elif self.msgtype == 2:
+            pktinfo = self.pktinfo.final_partial()
+        pktlen = len(pktinfo)
+        fmt = "@16s24sB%ss7s" % len(pktinfo)
+        header = struct.pack(fmt,
+                             packetid,
+                             des3key,
+                             self.msgtype,
+                             pktinfo,
+                             timestamp)
+        digest = MD5.new(data=header).digest()
+        header += digest
+        if self.msgtype == 0:
+            assert len(header) == 64 + 232
+        elif self.msgtype == 1:
+            assert len(header) == 64 + 24
+        elif self.msgtype == 2:
+            assert len(header) == 64 + 26
+        else:
+            raise EncodeError("Unknown message type")
+        pad = 328 - len(header)
         self.des3key = des3key
-        self.info = info
+        return header + Crypto.Random.get_random_bytes(pad)
 
 
 class OuterHeader():
@@ -135,51 +132,62 @@ class OuterHeader():
        Encrypted header part        [ 328 bytes]
        Padding                      [  31 bytes]
     """
-    def make_outer(self, rem_data, msg_type):
-        keyid = rem_data[1].decode('hex')
+    def __init__(self, rem_data, msgtype):
+        self.rem_data = rem_data
+        self.inner = InnerHeader(rem_data, msgtype)
+
+    def make_header(self):
+        keyid = self.rem_data[1].decode('hex')
         # This 3DES key and IV are only used to encrypt the 328 Byte Inner
         # Header.  The 3DES key is then RSA Encrypted using the Remailer's
         # Public key.
         des3key = Crypto.Random.get_random_bytes(24)
         iv = Crypto.Random.get_random_bytes(8)
-        pkcs1 = PKCS1_v1_5.new(rem_data[4])
+        desobj = DES3.new(des3key, DES3.MODE_CBC, IV=iv)
+        pkcs1 = PKCS1_v1_5.new(self.rem_data[4])
         rsakey = pkcs1.encrypt(des3key)
         # Why does Mixmaster record the RSA data length when the spec
         # allows for nothing but 1024 bit keys?
         lenrsa = len(rsakey)
         assert lenrsa == 128
-        inner = EncryptedHeader()
-        inner.make_header(des3key, iv, msg_type)
-        outer_header = struct.pack('16sB128s8s328s31s',
-                                   keyid,
-                                   lenrsa,
-                                   rsakey,
-                                   iv,
-                                   inner.packet,
-                                   Crypto.Random.get_random_bytes(31))
-        assert len(outer_header) == 512
-        self.outer_header = outer_header
-        self.inner = inner
+        header = struct.pack('16sB128s8s328s31s',
+                            keyid,
+                            lenrsa,
+                            rsakey,
+                            iv,
+                            desobj.encrypt(self.inner.make_header()),
+                            Crypto.Random.get_random_bytes(31))
+        assert len(header) == 512
+        return header
 
 
-class Body():
-    def encode(self, msgobj):
-        if 'Dests' in msgobj:
-           dests = msgobj['Dests'].split(",")
+class Payload():
+    """This class takes a Python email.message object and translates it into
+       a Mixmaster payload.  The resulting payload is stored as self.dbody
+       (decrytped body) as this matches the format used during Decode
+       processing.  This means randhops can be processed without having to
+       pass huge lumps of scalars for re-encoding to a random exit.
+    """
+    def __init__(self, msgobj):
+        self.msgobj = msgobj
+
+    def email2payload(self):
+        if 'Dests' in self.msgobj:
+            dests = self.msgobj['Dests'].split(",")
         else:
             raise EncodeError("No destinations specified")
         payload = self.encode_header(dests)
         heads = []
-        for k in msgobj.keys():
+        for k in self.msgobj.keys():
             if not k == 'Dests':
-                heads.append("%s: %s" % (k, msgobj[k]))
+                heads.append("%s: %s" % (k, self.msgobj[k]))
         payload += self.encode_header(heads)
-        payload += msgobj.get_payload()
+        payload += self.msgobj.get_payload()
         length = struct.pack('<I', len(payload))
         payload = length + payload
         payload += Crypto.Random.get_random_bytes(10240 - len(payload))
-        assert len(payload) == 10240
-        self.payload = payload
+        # dbody is the scalar expected withih the object passed to makemsg
+        self.dbody = payload
 
     def encode_header(self, items):
         """This function takes a list of destinations or headers and converts
@@ -204,69 +212,80 @@ class Mixmaster(object):
         self.chain = Chain.Chain(pubring)
 
     def dummy(self):
-        rem_data = self.randnode()
-        outhead = OuterHeader()
-        outhead.make_outer(rem_data, 1)
-        header = (outhead.outer_header +
-                  Crypto.Random.get_random_bytes(9728))
-        assert len(header) == 10240
-        # Number of Destinations (1)
-        payload = struct.pack("B", 1)
-        # Idenitfy this as a Dummy message
-        payload += "null:" + ("\x00" * 75)
-        # Number of Headers (None in this instance)
-        payload += struct.pack("B", 0)
-        # pad fake payload to 10240 Bytes
-        payload += Crypto.Random.get_random_bytes(10158)
-        desobj = DES3.new(outhead.inner.des3key,
-                          DES3.MODE_CBC,
-                          IV=outhead.inner.info.iv)
-        payload = desobj.encrypt(payload)
-        assert len(payload) == 10240
-        msgobj = email.message.Message()
-        msgobj.add_header('To', rem_data[0])
-        msgobj.set_payload(mixprep(header + payload))
+        exitnode = self.chain.randexit()
+        msg = email.message.Message()
+        # payload size is arbitrary as the payload class pads it with random
+        # data to a length of 10240.
+        msg.set_payload(Crypto.Random.get_random_bytes(10))
+        msg['Dests'] = 'null:'
+        payload = Payload(msg)
+        payload.email2payload()
+        outmsg = self.makemsg(payload, chainstr=exitnode)
         f = open(Utils.pool_filename('o'), 'w')
-        f.write(msgobj.as_string())
+        f.write(outmsg.as_string())
         f.close()
 
     def randhop(self, packet):
-        rem_data = self.randnode(exit=True)
-        header = OuterHeader()
-        header.make_outer(rem_data, 1)
-        payload = (header.outer_header +
-                   Crypto.Random.get_random_bytes(9728))
-        assert len(payload) == 10240
-        desobj = DES3.new(header.inner.des3key,
-                          DES3.MODE_CBC,
-                          IV=header.inner.info.iv)
-        payload += desobj.encrypt(packet.dbody)
-        assert len(payload) == 20480
-        msgobj = email.message.Message()
-        msgobj.add_header('To', rem_data[0])
-        msgobj.set_payload(mixprep(payload))
-        return msgobj
+        """Randhop is passed the decrypted message packet object that includes
+           a dbody (decrypted body) scalar.  This is the only part needed for
+           randhopping.
+        """
+        exitnode = self.chain.randexit()
+        return makemsg(packet, chainstr=exitnode)
 
-    def exitmsg(self):
-        rem_data = self.randnode(name='pymaster')
-        header = OuterHeader()
-        header.make_outer(rem_data, 1)
-        headers = (header.outer_header +
-                   Crypto.Random.get_random_bytes(9728))
-        assert len(headers) == 10240
-        desobj = DES3.new(header.inner.des3key,
+    def makemsg(self, packet, chainstr=None):
+        # packet is an object with a dbody scalar.
+        if chainstr is None:
+            chain = self.chain.chain()
+        else:
+            chain = chainstr.split(',')
+        chunks = 1
+        # First create the payload and the header for it.
+        thishop = chain.pop()
+        rem_data = self.randnode(name=thishop)
+        outer = OuterHeader(rem_data, 1)
+        # This is always the first header so it creates the list of headers.
+        headers = [outer.make_header()]
+        desobj = DES3.new(outer.inner.des3key,
                           DES3.MODE_CBC,
-                          IV=header.inner.info.iv)
-        msg = email.message.Message()
-        msg['Dests'] = 'steve@mixmin.net'
-        msg['Cc'] = 'mail2news@mixmin.net'
-        msg['Newsgroups'] = 'news.group'
-        msg.set_payload("Test Message")
-        body = Body()
-        body.encode(msg)
-        payload = desobj.encrypt(body.payload)
-        assert len(payload) == 10240
-        return mixprep(headers + payload)
+                          IV=outer.inner.pktinfo.iv)
+        payload = desobj.encrypt(packet.dbody)
+        # The remailer that will pass messages to this remailer needs to
+        # know the email address of the node to pass it to.
+        nextaddy = rem_data[0]
+        while len(chain) > 0:
+            numheads = len(headers)
+            thishop = chain.pop()
+            rem_data = self.randnode(name=thishop)
+            # This uses the rem_data list to pass the next hop address
+            # to the pktinfo section of Intermediate messages.
+            rem_data.append(nextaddy)
+            assert rem_data[5] == nextaddy
+            outer = OuterHeader(rem_data, 0)
+            header = outer.make_header()
+            for h in range(numheads):
+                desobj = DES3.new(outer.inner.des3key,
+                                  DES3.MODE_CBC,
+                                  IV=outer.inner.pktinfo.ivs[h])
+                headers[h] = desobj.encrypt(headers[h])
+            # All the headers are sorted, now we need to encrypt the payload
+            # with the same IV as the final header.
+            desobj = DES3.new(outer.inner.des3key,
+                              DES3.MODE_CBC,
+                              IV=outer.inner.pktinfo.ivs[18])
+            payload = desobj.encrypt(payload)
+            assert len(payload) == 10240
+            headers.insert(0, header)
+            nextaddy = rem_data[0]
+        pad = Crypto.Random.get_random_bytes((20 - len(headers)) * 512)
+        header = ''.join(headers) + pad
+        assert len(header) == 10240
+        msgobj = email.message.Message()
+        # We always want to sent the message to the outer-most remailer.
+        # Outer-most implies, the last remailer we encoded to.
+        msgobj.add_header('To', rem_data[0])
+        msgobj.set_payload(mixprep(header + payload))
+        return msgobj
 
     def randnode(self, name=None, exit=False):
         # pubring[0]    Email Address
@@ -280,8 +299,9 @@ class Mixmaster(object):
             else:
                 name = self.chain.randany()
         rem_data = self.pubring[name]
-        log.debug("Selected random node: %s <%s>", name, rem_data[0])
+        log.debug("Retrieved Pubkey data for: %s <%s>", name, rem_data[0])
         return rem_data
+
 
 def mixprep(binary):
     """Take a binary string, encode it as Base64 and wrap it to lines of
@@ -318,4 +338,15 @@ if (__name__ == "__main__"):
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
     pubring = KeyManager.Pubring()
-    print pubring.names
+    encode = Mixmaster(pubring)
+    msg = email.message.Message()
+    msg['Dests'] = 'steve@mixmin.net'
+    msg['Cc'] = 'mail2news@mixmin.net'
+    msg['Newsgroups'] = 'news.group'
+    msg['Chain'] = 'pymaster,pymaster,pymaster'
+    msg.set_payload("Test Message")
+
+    payload = Payload(msg)
+    payload.email2payload()
+    outmsg = encode.makemsg(payload)
+    encode.dummy()

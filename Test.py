@@ -26,7 +26,7 @@ import logging
 import email
 import timing
 import DecodePacket
-import EncodePacket
+import enc
 import KeyManager
 import Utils
 from Config import config
@@ -44,15 +44,35 @@ secring = KeyManager.Secring()
 mixmail = DecodePacket.MixMail()
 mixpacket = DecodePacket.MixPacket()
 decode = DecodePacket.Mixmaster(secring)
-encode = EncodePacket.Mixmaster(pubring)
+encode = enc.Mixmaster(pubring)
 
 msg = email.message.Message()
-msg.set_payload(encode.exitmsg())
-ismix = mixmail.email2packet(msg)
+msg['Dests'] = 'steve@mixmin.net'
+msg['Cc'] = 'mail2news@mixmin.net'
+msg['Newsgroups'] = 'news.group'
+msg.set_payload("Test Message")
+payload = enc.Payload(msg)
+payload.email2payload()
+inmsg = encode.makemsg(payload, chainstr='pymaster,pymaster,pymaster')
+ismix = mixmail.email2packet(inmsg)
+if ismix:
+    packet = mixmail.get_packet()
+    mixpacket.unpack(packet)
+    outmsg = decode.process(mixpacket)
+else:
+    print "Not an intermediate message"
+ismix = mixmail.email2packet(outmsg)
+if ismix:
+    packet = mixmail.get_packet()
+    mixpacket.unpack(packet)
+    outmsg = decode.process(mixpacket)
+else:
+    print "Not an intermediate message"
+ismix = mixmail.email2packet(outmsg)
 if ismix:
     packet = mixmail.get_packet()
     mixpacket.unpack(packet)
     outmsg = decode.process(mixpacket)
     print outmsg.as_string()
 else:
-    print "Not a Mixmaster message"
+    print "Not an exit Mixmaster message"

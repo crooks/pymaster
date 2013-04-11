@@ -255,7 +255,7 @@ class Pool():
                     continue
                 except DecodePacket.DestinationError:
                     log.debug("Re-encoding this message for Random Hop.")
-                    self.msg = self.encode.randhop(mixobj)
+                    msg = self.encode.randhop(mixobj)
                 except DecodePacket.DummyMessage, e:
                     log.debug("%s: Dummy message", f)
                     self.delete(fq)
@@ -269,6 +269,7 @@ class Pool():
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                        config.get('mail', 'address'))
             smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+            log.debug("Email sent to: %s", msg["To"])
             self.delete(fq)
         smtp.quit()
         # OUtbound dummy message generation.
@@ -283,6 +284,7 @@ class Pool():
     def delete(self, fq):
         """Delete files from the Mixmaster Pool."""
         os.remove(fq)
+        log.debug("%s: Deleted", fq)
 
     def pick_files(self):
         """Pick a random subset of filenames in the Pool and return them as a
