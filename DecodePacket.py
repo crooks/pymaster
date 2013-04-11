@@ -250,6 +250,7 @@ class Mixmaster():
             # This replaces the first header that we removed.
             payload += Crypto.Random.get_random_bytes(512)
             assert len(payload) == 10240
+            desobj = DES3.new(deskey, DES3.MODE_CBC, IV=ivs[18])
             payload += desobj.decrypt(packet.encbody)
             assert len(payload) == 20480
             self.msg.set_payload(self.mixprep(payload))
@@ -273,6 +274,8 @@ class Mixmaster():
             sbyte = 0
             ebyte = 5
             length, dfields = struct.unpack('<IB', packet.dbody[sbyte:ebyte])
+            if dfields > 20:
+                raise ValidationError("Too many Destination fields")
             dest_struct = "80s" * dfields
             sbyte = ebyte
             ebyte = sbyte + (80 * dfields)
@@ -463,6 +466,7 @@ class ConfFiles():
             return False
         file_modified = os.path.getmtime(self.filename)
         if file_modified > self.mtime:
+            log.info("%s modified. Recreating rules.", self.filename)
             (self.regex_rules,
              self.list_rules) = Utils.file2regex(self.filename)
             self.mtime = file_modified
