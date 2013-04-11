@@ -185,6 +185,7 @@ class Chain():
                     # Every candidate Middleman is excluded.
                     raise ChainError("Infufficient remailer pool")
             chainlist[n] = new_node
+        log.debug("Created chain: %s", chainlist)
         return chainlist
 
 
