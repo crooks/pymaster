@@ -29,6 +29,7 @@ from Config import config
 class ChainError(Exception):
     pass
 
+
 class Chain():
     def __init__(self, pubring):
         mlist2 = config.get('keys', 'mlist2')
@@ -102,8 +103,9 @@ class Chain():
         exitnum = len(exits)
         if exitnum == 0:
             raise ChainError("No candidate Exit Remailers")
-        return exits[self._randint(exitnum - 1)]
-
+        exit = exits[self._randint(exitnum - 1)]
+        log.debug("Selected random exit: %s", exit)
+        return exit
 
     def randany(self):
         """Like randexit but pick any random node, not just exits.
@@ -116,8 +118,9 @@ class Chain():
         remcount = len(remailers)
         if remcount == 0:
             raise ChainError("No candidate remailers")
-        return remailers[self._randint(remcount - 1)]
-
+        remailer = remailers[self._randint(remcount - 1)]
+        log.debug("Select random node: %s", remailer)
+        return remailer
 
     def chain(self, chainstr=None):
         if chainstr is None:
