@@ -491,7 +491,7 @@ class Pubring(KeyUtils):
                     name = header.pop(0)
                     names.append(name)
                     header.insert(4, self.pub_construct(key))
-                    cache[name] = tuple(header)
+                    cache[name] = header
                     gothead = False
                     inkey = False
             elif gothead and inkey:
