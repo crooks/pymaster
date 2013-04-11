@@ -179,7 +179,7 @@ class MailMessage():
         #TODO Dest Blocks
         payload += '\n%s\n\n' % Utils.capstring()
         payload += "SUPPORTED MIXMASTER (TYPE II) REMAILERS\n"
-        for h in self.pubring.headers():
+        for h in self.pubring.headers:
             payload += h + "\n"
         msg.set_payload(payload)
         msg["Subject"] = ("Capabilities of the %s remailer"

@@ -231,7 +231,7 @@ class Mixmaster(object):
            randhopping.
         """
         exitnode = self.chain.randexit()
-        return makemsg(packet, chainstr=exitnode)
+        return self.makemsg(packet, chainstr=exitnode)
 
     def makemsg(self, packet, chainstr=None):
         # packet is an object with a dbody scalar.
