@@ -216,8 +216,7 @@ class MailMessage():
 
 
 class Pool():
-    def __init__(self, pubring, secring):
-        idlog = DecodePacket.IDLog()
+    def __init__(self, pubring, secring, idlog):
         encode = EncodePacket.Mixmaster(pubring)
         decode = DecodePacket.Mixmaster(secring, idlog)
         self.next_process = timing.future(mins=1)
@@ -281,6 +280,7 @@ class Pool():
             self.encode.dummy()
         # Return the time for the next pool processing.
         self.next_process = timing.dhms_future(self.interval)
+        self.idlog.sync()
         log.debug("Next pool process at %s",
                   timing.timestamp(self.next_process))
 
@@ -328,10 +328,15 @@ if (__name__ == "__main__"):
     pubring = KeyManager.Pubring()
     secring = KeyManager.Secring()
     mail = MailMessage(pubring)
-    pool = Pool(pubring, secring)
+    idlog = DecodePacket.IDLog()
+    pool = Pool(pubring, secring, idlog)
     sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:
         mail.iterate_mailbox()
         pool.process()
         log.debug("Sleeping for %s seconds", sleep)
-        timing.sleep(sleep)
+        try:
+            timing.sleep(sleep)
+        except KeyboardInterrupt:
+            idlog.close()
+            sys.exit(0)
