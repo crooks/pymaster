@@ -517,7 +517,7 @@ class IDLog():
                     del self.idlog[k]
                     deleted += 1
                 else:
-                    self.iflog[k] += 1
+                    self.idlog[k] += 1
             self.idlog.sync()
             self.nextday = timing.future(days=1)
             after = len(self.idlog)
@@ -531,6 +531,9 @@ class IDLog():
         else:
             self.idlog[packetid] = 0
             return False
+
+    def sync(self):
+        self.idlog.sync()
 
     def close(self):
         self.idlog.close()
