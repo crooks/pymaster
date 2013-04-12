@@ -40,14 +40,20 @@ class EncodeError(Exception):
 
 
 class PacketInfo():
+    """Packet Info is a component of the Encrypted Header part of a Mixmaster
+       message.  It is the only component with differing members for
+       Intermediate, Exit and Partial Exit messages.
+    """
     def intermediate_hop(self, nextaddy):
         """Packet type 0 (intermediate hop):
            19 Initialization vectors      [152 bytes]
            Remailer address               [ 80 bytes]
         """
+        # 152 Random bytes equates to 19 IVs of 8 Bytes each.
         ivstr = Crypto.Random.get_random_bytes(152)
         fmt = "8s" * 19
         ivs = struct.unpack(fmt, ivstr)
+        # The address of the next hop needs to be padded to 80 Chars
         padaddy = nextaddy + ('\x00' * (80 - len(nextaddy)))
         self.nextaddy = nextaddy
         self.ivs = ivs
@@ -234,7 +240,8 @@ class Mixmaster(object):
         return self.makemsg(packet, chainstr=exitnode)
 
     def makemsg(self, packet, chainstr=None):
-        # packet is an object with a dbody scalar.
+        # packet must be an object with a dbody scalar.
+        assert hasattr(packet, "dbody")
         if chainstr is None:
             chain = self.chain.chain()
         else:
