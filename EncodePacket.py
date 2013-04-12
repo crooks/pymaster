@@ -70,7 +70,7 @@ class PacketInfo():
         self.iv = iv
         return struct.pack('@16s8s', messageid, iv)
 
-    def final_partial(self):
+    def final_partial(self, chunknum, numchunks, mid):
         """Packet type 2 (final hop, partial message):
            Chunk number                   [  1 byte ]
            Number of chunks               [  1 byte ]
@@ -79,8 +79,9 @@ class PacketInfo():
         """
         self.chunknum = chunknum
         self.numchunks = numchunks
-        self.messageid = Crypto.Random.get_random_bytes(16)
+        self.messageid = mid
         self.iv = Crypto.Random.get_random_bytes(8)
+        return struct.pack('@BB16s8s', chunknum, numchunks, mid, iv)
 
 
 class InnerHeader():
@@ -240,26 +241,34 @@ class Mixmaster(object):
         return self.makemsg(packet, chainstr=exitnode)
 
     def makemsg(self, packet, chainstr=None):
-        # packet must be an object with a dbody scalar.
-        assert hasattr(packet, "dbody")
         if chainstr is None:
             chain = self.chain.chain()
         else:
             chain = chainstr.split(',')
-        chunks = 1
+        packet, headers, nextaddy = self.final_hop(packet, chain.pop())
+        msg = self.intermediate_hops(packet, headers, chain, nextaddy)
+        return msg
+
+    def final_hop(self, packet, node):
+        # packet must be an object with a dbody scalar.
+        assert hasattr(packet, "dbody")
         # First create the payload and the header for it.
-        thishop = chain.pop()
-        rem_data = self.randnode(name=thishop)
+        rem_data = self.randnode(name=node)
         outer = OuterHeader(rem_data, 1)
         # This is always the first header so it creates the list of headers.
         headers = [outer.make_header()]
         desobj = DES3.new(outer.inner.des3key,
                           DES3.MODE_CBC,
                           IV=outer.inner.pktinfo.iv)
-        payload = desobj.encrypt(packet.dbody)
+        packet.dbody = desobj.encrypt(packet.dbody)
         # The remailer that will pass messages to this remailer needs to
         # know the email address of the node to pass it to.
         nextaddy = rem_data[0]
+        return packet, headers, nextaddy
+
+    def intermediate_hops(self, packet, headers, chain, nextaddy):
+        # packet must be an object with a dbody scalar.
+        assert hasattr(packet, "dbody")
         while len(chain) > 0:
             numheads = len(headers)
             thishop = chain.pop()
@@ -280,8 +289,8 @@ class Mixmaster(object):
             desobj = DES3.new(outer.inner.des3key,
                               DES3.MODE_CBC,
                               IV=outer.inner.pktinfo.ivs[18])
-            payload = desobj.encrypt(payload)
-            assert len(payload) == 10240
+            packet.dbody = desobj.encrypt(packet.dbody)
+            assert len(packet.dbody) == 10240
             headers.insert(0, header)
             nextaddy = rem_data[0]
         pad = Crypto.Random.get_random_bytes((20 - len(headers)) * 512)
@@ -290,8 +299,8 @@ class Mixmaster(object):
         msgobj = email.message.Message()
         # We always want to sent the message to the outer-most remailer.
         # Outer-most implies, the last remailer we encoded to.
-        msgobj.add_header('To', rem_data[0])
-        msgobj.set_payload(mixprep(header + payload))
+        msgobj.add_header('To', nextaddy)
+        msgobj.set_payload(mixprep(header + packet.dbody))
         return msgobj
 
     def randnode(self, name=None, exit=False):
@@ -350,7 +359,7 @@ if (__name__ == "__main__"):
     msg['Dests'] = 'steve@mixmin.net'
     msg['Cc'] = 'mail2news@mixmin.net'
     msg['Newsgroups'] = 'news.group'
-    msg['Chain'] = 'pymaster,pymaster,pymaster'
+    msg['Chain'] = 'pymaster'
     msg.set_payload("Test Message")
 
     payload = Payload(msg)

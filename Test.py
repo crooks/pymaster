@@ -43,11 +43,12 @@ pubring = KeyManager.Pubring()
 secring = KeyManager.Secring()
 mixmail = DecodePacket.MixMail()
 mixpacket = DecodePacket.MixPacket()
-decode = DecodePacket.Mixmaster(secring)
+idlog = DecodePacket.IDLog()
+decode = DecodePacket.Mixmaster(secring, idlog)
 encode = enc.Mixmaster(pubring)
 
 msg = email.message.Message()
-msg['Dests'] = 'steve@mixmin.net'
+msg['Dests'] = 'test@test.invalid'
 msg['Cc'] = 'mail2news@mixmin.net'
 msg['Newsgroups'] = 'news.group'
 msg.set_payload("Test Message")
