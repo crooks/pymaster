@@ -217,8 +217,9 @@ class MailMessage():
 
 class Pool():
     def __init__(self, pubring, secring):
+        idlog = DecodePacket.IDLog()
         encode = EncodePacket.Mixmaster(pubring)
-        decode = DecodePacket.Mixmaster(secring)
+        decode = DecodePacket.Mixmaster(secring, idlog)
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
@@ -231,11 +232,13 @@ class Pool():
                   timing.timestamp(self.next_process))
         self.encode = encode
         self.decode = decode
+        self.idlog = idlog
 
     def process(self):
         if timing.now() < self.next_process:
             return 0
         log.info("Beginning Pool processing.")
+        self.idlog.prune()
         smtp = smtplib.SMTP(config.get('mail', 'server'))
         for f in self.pick_files():
             fq = os.path.join(config.get('paths', 'pool'), f)

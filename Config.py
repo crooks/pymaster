@@ -60,6 +60,7 @@ config.set('general', 'loglevel', 'info')
 config.set('general', 'middleman', 0)
 config.set('general', 'klen', 128)
 config.set('general', 'interval', '5m')
+config.set('general', 'idexp', 7)
 config.set('general', 'passphrase', 'A badly configured server')
 config.set('general', 'block_first', 1)
 

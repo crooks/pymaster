@@ -25,6 +25,7 @@ import sys
 import os
 import os.path
 import logging
+import shelve  # Required for packetid log
 import email.message
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
@@ -34,6 +35,7 @@ from Config import config
 import EncodePacket
 import KeyManager
 import Utils
+import timing
 
 
 class ValidationError(Exception):
@@ -145,7 +147,7 @@ class MixMail(object):
 
 
 class Mixmaster():
-    def __init__(self, secring):
+    def __init__(self, secring, idlog):
         self.destalw = ConfFiles(config.get('etc', 'dest_alw'))
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'))
         self.headalw = ConfFiles(config.get('etc', 'head_alw'))
@@ -153,6 +155,7 @@ class Mixmaster():
         self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
         self.middleman = config.getboolean('general', 'middleman')
         self.secring = secring
+        self.idlog = idlog
 
     def process(self, packet):
         self.msg = email.message.Message()
@@ -215,9 +218,11 @@ class Mixmaster():
            Random padding               [fill to 328 bytes]
         """
         assert len(packet.dhead) == 328
-        (packet_id,
+        (packetid,
          deskey,
          packet_type) = struct.unpack("@16s24sB", packet.dhead[0:41])
+        if self.idlog.hit(packetid):
+            raise ValidationError('Known PacketID. Potential Replay-Attack.')
         if packet_type == 0:
             """Packet type 0 (intermediate hop):
                19 Initialization vectors      [152 bytes]
@@ -481,6 +486,55 @@ class ConfFiles():
                 return True
         return False
 
+class IDLog():
+    """This class is concerned with logging Packet ID's in order to prevent
+       replay attacks.  The ID is composed of 16 random bytes and these are
+       used as the Key for the persistent dictionary (shelve).  The value held
+       against each key is the date when the packetid was last seen.
+    """
+    def __init__(self):
+        logfile = config.get('general', 'idlog')
+        idlog = shelve.open(logfile, flag='c', writeback=False)
+        idexp = config.getint('general', 'idexp')
+        nextday = timing.future(days=1)
+        self.idlog = idlog
+        self.idexp = idexp
+        self.nextday = nextday
+        log.info("Packet ID log initialized. Entries=%s, ExpireDays=%s",
+                 len(idlog), idexp)
+
+    def prune(self):
+        """Check if a day has passed since the last prune operation.  If it
+           has, increment the day counter on each stored packetid.  If the
+           count exceeeds the expiry period then delete the id from the log.
+        """
+        if timing.now() > self.nextday:
+            log.debug("Starting PacketID Log pruning.")
+            before = len(self.idlog)
+            deleted = 0
+            for k in self.idlog.keys():
+                if self.idlog[k] > self.idexp:
+                    del self.idlog[k]
+                    deleted += 1
+                else:
+                    self.iflog[k] += 1
+            self.idlog.sync()
+            self.nextday = timing.future(days=1)
+            after = len(self.idlog)
+            log.info("Packet ID prune complete. Before=%s, Deleted=%s, "
+                     "After=%s.", before, deleted, after)
+
+    def hit(self, packetid):
+        if packetid in self.idlog:
+            self.idlog[packetid] = 0
+            return True
+        else:
+            self.idlog[packetid] = 0
+            return False
+
+    def close(self):
+        self.idlog.close()
+        log.info("Synced and closed the Packet ID log.")
 
 log = logging.getLogger("Pymaster.%s" % __name__)
 if (__name__ == "__main__"):
