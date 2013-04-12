@@ -433,6 +433,37 @@ class Pubring(KeyUtils):
         mix += Crypto.Util.number.long_to_bytes(keyobj.e, blocksize=128)
         assert len(mix) == 2 + 128 + 128
         return self.wrap(mix.encode("base64"), 40)
+
+    def header_validate(self, header):
+        """Perform crude validation that a header line complies with what's
+           expected in a pubring.mix file.
+        """
+        valid = True
+        # Standard headers are:-
+        # header[0] Short Name
+        # header[1] Email Address
+        # header[2] KeyID
+        # header[3] Mixmaster Version
+        # header[4] Capstring
+        if len(header[0]) > 12:
+            valid = False
+        if len(header[1]) < 3 or len(header[1]) > 80:
+            valid = False
+        if not '@' in header[1]:
+            valid = False
+        if len(header[2]) != 32:
+            valid = False
+        if not self.ishex(header[2]):
+            valid = False
+        if len(header) == 7:
+            # Mixmaster > v3.0 enable validation of key date validity.
+            # header[5] Valid From Date
+            # header[6] Expire Date
+            if self.date_prevalid(header[5]):
+                valid = False
+            if self.date_expired(header[6]):
+                valid = False
+        return valid
         
     def read_pubring(self):
         """For a given remailer shortname, try and find an email address and a
@@ -453,27 +484,16 @@ class Pubring(KeyUtils):
         # with the remailer's email address.
         gothead = False
         for line in f:
+            line = line.rstrip()
             if not gothead and not inkey:
-                # headline is a textual representation of the Pubkey header.
-                # header is a list of headline's components
-                headline = line.rstrip()
-                header = headline.split(" ")
-                # Standard headers are:-
-                # header[0] Short Name
-                # header[1] Email Address
-                # header[2] KeyID
-                # header[3] Mixmaster Version
-                # header[4] Capstring
-                if len(header) == 5:
-                    gothead = True
-                elif len(header) == 7:
-                    # Mixmaster > v3.0 enable validation of key date validity.
-                    # header[5] Valid From Date
-                    # header[6] Expire Date
-                    if (not self.date_prevalid(header[5]) and
-                        not self.date_expired(header[6])):
-                        # Key is within validity period
-                        gothead = True
+                # The components of a pubkey header are delimited by a
+                # single space.
+                header = line.split(" ")
+                if len(header) == 5 or len(header) == 7:
+                    # A valid header will always have 5 or 7 elements.
+                    gothead = self.header_validate(header)
+                    if gothead:
+                        headline = line
             elif (gothead and not inkey and
                 line.startswith("-----Begin Mix Key-----")):
                 inkey = True
@@ -527,6 +547,8 @@ if (__name__ == "__main__"):
     p = Pubring()
     remailer = p['pymaster']
     print p.names
+    print p.addresses
+    print p.headers
     if remailer is not None:
         print remailer[0], remailer[1]
         print s[remailer[1]]
