@@ -385,11 +385,16 @@ class Pubring(KeyUtils):
         log.info("Initialized Pubring. Path=%s, Keys=%s", keyfile, len(self.cache))
 
     def __getitem__(self, name):
-        # header[0] Email Address
-        # header[1] KeyID
-        # header[2] Mixmaster Version
-        # header[3] Capstring
-        # header[4] RSA Key Object
+        # header[0] Shortname
+        # header[1] Email Address
+        # header[2] KeyID
+        # header[3] RSA Key Object
+        # header[4] Mixmaster Version
+        # header[5] Capstring
+        if name in self.names:
+            # Check if the requested name is a shortname.  If it is, change
+            # the request to the corresponding email address.
+            name = self.snindex[name]
         if not name in self.cache:
             # If the requested Public Key isn't in the Cache, retry reading it
             # from the pubring.mix file.
@@ -398,7 +403,7 @@ class Pubring(KeyUtils):
                 # Give up now, the requested key doesn't exist in this
                 # Pubring.
                 raise PubringError("%s: Public Key not found" % name)
-        if len(self.cache[name]) == 7:
+        if len(self.cache[name]) == 8:
             # This is a later style Mixmaster key so we can try to validate
             # the dates on it.
             if self.date_expired(self.cache[name][6]):
@@ -407,7 +412,7 @@ class Pubring(KeyUtils):
                 return None
         # Only return the first five elements.  Nothing cares about the dates
         # after validation has happened.
-        return self.cache[name][0:5]
+        return self.cache[name][0:6]
 
     def get_addresses(self):
         if len(self.remailer_addresses) == 0:
@@ -469,7 +474,13 @@ class Pubring(KeyUtils):
         """For a given remailer shortname, try and find an email address and a
         valid key.  If no valid key is found, return None instead of the key.
         """
+        # The cache is keyed by remailer email address and contains all the
+        # related data in a list.
         cache = {}
+        # The index provides a means for items to be extracted by shortname
+        # instead of address.  It might be removed later but for now, other
+        # elements of the remailer code depend on that ability.
+        snindex = {}
         # Headers is a list of the remailer header lines found in the Pubring.
         # This is used to list known remailers in remailer-conf replies.
         headers = []
@@ -508,10 +519,16 @@ class Pubring(KeyUtils):
                     # We want this key please!
                     headers.append(headline)
                     addresses.append(header[1])
-                    name = header.pop(0)
-                    names.append(name)
-                    header.insert(4, self.pub_construct(key))
-                    cache[name] = header
+                    names.append(header[0])
+                    # The key object itself is inserted as the fourth element
+                    # in the list.  No good reason, other than it needs to be
+                    # inserted at some fixed point and the total length is
+                    # varible, depending on whether dates are present.
+                    header.insert(3, self.pub_construct(key))
+                    # Here we key the cache by remailer email address.
+                    cache[header[1]] = header
+                    # Populate the shortname index.
+                    snindex[header[0]] = header[1]
                     gothead = False
                     inkey = False
             elif gothead and inkey:
@@ -531,6 +548,7 @@ class Pubring(KeyUtils):
                                    % line.rstrip())
         f.close()
         self.cache = cache
+        self.snindex = snindex
         self.headers = headers
         self.addresses = addresses
         self.names = names
@@ -542,13 +560,13 @@ if (__name__ == "__main__"):
     log.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     log.addHandler(handler)
-    log.info("Running Pymaster as %s", __name__)
     s = Secring()
     p = Pubring()
-    remailer = p['pymaster']
-    print p.names
-    print p.addresses
-    print p.headers
-    if remailer is not None:
-        print remailer[0], remailer[1]
-        print s[remailer[1]]
+    remailer = p['dizum']
+    print remailer
+    #print p.names
+    #print p.addresses
+    #print p.headers
+    #if remailer is not None:
+    #    print remailer[0], remailer[1]
+    #    print s[remailer[1]]
