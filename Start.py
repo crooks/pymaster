@@ -57,7 +57,7 @@ class MailMessage():
                   maildir, self.server)
 
     def iterate_mailbox(self):
-        log.info("Beginning mailbox processing")
+        log.debug("Beginning mailbox processing")
         self.smtp = smtplib.SMTP(self.server)
         messages = self.inbox.keys()
         self.added_to_pool = 0
@@ -236,7 +236,7 @@ class Pool():
     def process(self):
         if timing.now() < self.next_process:
             return 0
-        log.info("Beginning Pool processing.")
+        log.debug("Beginning Pool processing.")
         self.idlog.prune()
         smtp = smtplib.SMTP(config.get('mail', 'server'))
         for f in self.pick_files():
@@ -319,8 +319,10 @@ log = logging.getLogger("Pymaster")
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
+    loglevels = {'debug': logging.DEBUG, 'info': logging.INFO,
+                 'warn': logging.WARN, 'error': logging.ERROR}
     log = logging.getLogger("Pymaster")
-    log.setLevel(logging.DEBUG)
+    log.setLevel(loglevels[config.get('logging', 'level')])
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
