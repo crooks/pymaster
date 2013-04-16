@@ -391,14 +391,14 @@ class Pubring(KeyUtils):
         # header[3] RSA Key Object
         # header[4] Mixmaster Version
         # header[5] Capstring
-        if name in self.names:
+        if name in self.snindex:
             # Check if the requested name is a shortname.  If it is, change
             # the request to the corresponding email address.
             name = self.snindex[name]
         if not name in self.cache:
             # If the requested Public Key isn't in the Cache, retry reading it
             # from the pubring.mix file.
-            self.read_pubring()
+            self.recache()
             if not name in self.cache:
                 # Give up now, the requested key doesn't exist in this
                 # Pubring.
@@ -415,9 +415,10 @@ class Pubring(KeyUtils):
         return self.cache[name][0:6]
 
     def get_addresses(self):
-        if len(self.remailer_addresses) == 0:
-            self.read_pubring()
-        return self.remailer_addresses
+        return self.cache.keys()
+
+    def get_names(self):
+        return self.snindex.keys()
 
     def pub_construct(self, key):
         length = struct.unpack("<H", key[0:2])[0]
@@ -469,10 +470,21 @@ class Pubring(KeyUtils):
             if self.date_expired(header[6]):
                 valid = False
         return valid
+
+    def recache(self):
+        # If the file has been modified since the last read, it's worth
+        # reading it again.
+        if os.path.getmtime(self.keyfile) > self.mtime:
+            log.debug("%s modified. Recreating rules.", self.keyfile)
+            self.read_pubring()
+        else:
+            log.debug("%s: Request to recache ignored.  File has not been "
+                      "modified since last cache.", self.keyfile)
         
     def read_pubring(self):
-        """For a given remailer shortname, try and find an email address and a
-        valid key.  If no valid key is found, return None instead of the key.
+        """Read the Public Keyring file and cache the results in a dictionary,
+           keyed by email address.  In addition, create an index of shortnames
+           to email addresses.
         """
         # The cache is keyed by remailer email address and contains all the
         # related data in a list.
@@ -484,9 +496,6 @@ class Pubring(KeyUtils):
         # Headers is a list of the remailer header lines found in the Pubring.
         # This is used to list known remailers in remailer-conf replies.
         headers = []
-        # The following two are shortcut lists of addresses and names.
-        addresses = []
-        names = []
         f = open(self.keyfile, 'r')
         # Bool to indicate when an actual key is being read.  Set True by
         # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
@@ -518,8 +527,6 @@ class Pubring(KeyUtils):
                     keyid == header[2]):
                     # We want this key please!
                     headers.append(headline)
-                    addresses.append(header[1])
-                    names.append(header[0])
                     # The key object itself is inserted as the fourth element
                     # in the list.  No good reason, other than it needs to be
                     # inserted at some fixed point and the total length is
@@ -550,8 +557,8 @@ class Pubring(KeyUtils):
         self.cache = cache
         self.snindex = snindex
         self.headers = headers
-        self.addresses = addresses
-        self.names = names
+        # Reset the modified file time
+        self.mtime = os.path.getmtime(self.keyfile)
 
 
 log = logging.getLogger("Pymaster.%s" % __name__)
@@ -564,8 +571,8 @@ if (__name__ == "__main__"):
     p = Pubring()
     remailer = p['dizum']
     print remailer
-    #print p.names
-    #print p.addresses
+    print p.get_addresses()
+    print p.get_names()
     #print p.headers
     #if remailer is not None:
     #    print remailer[0], remailer[1]
