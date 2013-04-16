@@ -144,14 +144,14 @@ class OuterHeader():
         self.inner = InnerHeader(rem_data, msgtype)
 
     def make_header(self):
-        keyid = self.rem_data[1].decode('hex')
+        keyid = self.rem_data[2].decode('hex')
         # This 3DES key and IV are only used to encrypt the 328 Byte Inner
         # Header.  The 3DES key is then RSA Encrypted using the Remailer's
         # Public key.
         des3key = Crypto.Random.get_random_bytes(24)
         iv = Crypto.Random.get_random_bytes(8)
         desobj = DES3.new(des3key, DES3.MODE_CBC, IV=iv)
-        pkcs1 = PKCS1_v1_5.new(self.rem_data[4])
+        pkcs1 = PKCS1_v1_5.new(self.rem_data[3])
         rsakey = pkcs1.encrypt(des3key)
         # Why does Mixmaster record the RSA data length when the spec
         # allows for nothing but 1024 bit keys?
@@ -263,7 +263,7 @@ class Mixmaster(object):
         packet.dbody = desobj.encrypt(packet.dbody)
         # The remailer that will pass messages to this remailer needs to
         # know the email address of the node to pass it to.
-        nextaddy = rem_data[0]
+        nextaddy = rem_data[1]
         return packet, headers, nextaddy
 
     def intermediate_hops(self, packet, headers, chain, nextaddy):
@@ -276,7 +276,7 @@ class Mixmaster(object):
             # This uses the rem_data list to pass the next hop address
             # to the pktinfo section of Intermediate messages.
             rem_data.append(nextaddy)
-            assert rem_data[5] == nextaddy
+            assert rem_data[6] == nextaddy
             outer = OuterHeader(rem_data, 0)
             header = outer.make_header()
             for h in range(numheads):

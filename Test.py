@@ -26,7 +26,7 @@ import logging
 import email
 import timing
 import DecodePacket
-import enc
+import EncodePacket
 import KeyManager
 import Utils
 from Config import config
@@ -45,14 +45,14 @@ mixmail = DecodePacket.MixMail()
 mixpacket = DecodePacket.MixPacket()
 idlog = DecodePacket.IDLog()
 decode = DecodePacket.Mixmaster(secring, idlog)
-encode = enc.Mixmaster(pubring)
+encode = EncodePacket.Mixmaster(pubring)
 
 msg = email.message.Message()
 msg['Dests'] = 'test@test.invalid'
 msg['Cc'] = 'mail2news@mixmin.net'
 msg['Newsgroups'] = 'news.group'
 msg.set_payload("Test Message")
-payload = enc.Payload(msg)
+payload = EncodePacket.Payload(msg)
 payload.email2payload()
 inmsg = encode.makemsg(payload, chainstr='pymaster,pymaster,pymaster')
 ismix = mixmail.email2packet(inmsg)

@@ -396,6 +396,7 @@ class Pubring(KeyUtils):
             # the request to the corresponding email address.
             name = self.snindex[name]
         if not name in self.cache:
+            print "Name not in cache"
             # If the requested Public Key isn't in the Cache, retry reading it
             # from the pubring.mix file.
             self.recache()
@@ -406,7 +407,9 @@ class Pubring(KeyUtils):
         if len(self.cache[name]) == 8:
             # This is a later style Mixmaster key so we can try to validate
             # the dates on it.
-            if self.date_expired(self.cache[name][6]):
+            if self.date_expired(self.cache[name][7]):
+                log.info("Key for %s has expired.  Deleting it from the "
+                         "cache.", self.cache[name][0])
                 # Public Key has expired.
                 del self.cache[name]
                 return None

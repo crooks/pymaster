@@ -204,7 +204,7 @@ if (__name__ == "__main__"):
     log.addHandler(handler)
     import KeyManager
     pubring = KeyManager.Pubring()
-    pubring.read_pubring()
     c = Chain(pubring)
     print c.chain("*, austria, *, *, *")
     print "Random Node: %s" % c.randany()
+    print "Random Exit: %s" % c.randexit()
