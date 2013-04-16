@@ -60,6 +60,7 @@ class Chain():
         f = open(self.mlist2, 'r')
         instats = False
         remailers = []
+        shortnames = self.pubring.get_names()
         for line in f:
             if line.startswith("Generated: "):
                 generated = line.split(": ", 1)[1].rstrip()
@@ -85,7 +86,7 @@ class Chain():
                     continue
                 # This check ensures there is a public key corresponding to
                 # the candidate.  If not, we can't encrypt to it.
-                if name in self.pubring.names:
+                if name in shortnames:
                     remailers.append(name)
                 else:
                     log.warn("%s: In stats but no Public Key available.", name)
