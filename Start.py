@@ -270,8 +270,11 @@ class Pool():
             msg["Date"] = email.Utils.formatdate()
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                        config.get('mail', 'address'))
-            smtp.sendmail(msg["From"], msg["To"], msg.as_string())
-            log.debug("Email sent to: %s", msg["To"])
+            try:
+                smtp.sendmail(msg["From"], msg["To"], msg.as_string())
+                log.debug("Email sent to: %s", msg["To"])
+            except smtplib.SMTPRecipientsRefused, e:
+                log.warn("SMTP failed with: %s", e)
             self.delete(fq)
         smtp.quit()
         # OUtbound dummy message generation.
