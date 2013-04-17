@@ -536,7 +536,7 @@ class Pubring(KeyUtils):
                 key = b64key.decode("base64")
                 if (len(key) == keylen and
                     keyid == MD5.new(data=key[2:258]).hexdigest() and
-                    keyid == header[2]):
+                    keyid == remailer['keyid']):
                     # We want this key please!
                     headers.append(headline)
                     # The key object itself is inserted as the fourth element
