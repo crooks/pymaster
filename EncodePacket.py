@@ -217,19 +217,31 @@ class Mixmaster(object):
     def __init__(self, pubring):
         self.pubring = pubring
         self.chain = Chain.Chain(pubring)
+        # Easiest way to inject Dummies is to chain them through the local
+        # remailer.  That way they can be stored in the pool like any other
+        # received message.
+        self.dummychain = "%s,*" % config.get('general', 'shortname')
 
     def dummy(self):
-        exitnode = self.chain.randexit()
         msg = email.message.Message()
         # payload size is arbitrary as the payload class pads it with random
         # data to a length of 10240.
         msg.set_payload(Crypto.Random.get_random_bytes(10))
         msg['Dests'] = 'null:'
-        payload = Payload(msg)
-        payload.email2payload()
-        outmsg = self.makemsg(payload, chainstr=exitnode)
-        f = open(Utils.pool_filename('o'), 'w')
-        f.write(outmsg.as_string())
+        # The payload object created here will be extended by the various
+        # fuctions that tweak the message into the final format for pool
+        # injection.
+        packet = Payload(msg)
+        # email2payload compiles the Mixmaster payload; the second 10240 Bytes
+        # of the overall Mixmaster packet.  This is stored in packet.dbody.
+        packet.email2payload()
+        # The chain comprises two hops; the first is the local remailer, the
+        # second a randomly selected node.
+        chain = self.chain.chain(self.dummychain)
+        self.final_hop(packet, chain.pop())
+        self.intermediate_hops(packet, chain)
+        f = open(Utils.pool_filename('m'), 'wb')
+        f.write(packet.payload)
         f.close()
 
     def randhop(self, packet):
@@ -244,10 +256,10 @@ class Mixmaster(object):
         if chainstr is None:
             chain = self.chain.chain()
         else:
-            chain = chainstr.split(',')
-        packet, headers, nextaddy = self.final_hop(packet, chain.pop())
-        msg = self.intermediate_hops(packet, headers, chain, nextaddy)
-        return msg
+            chain = self.chain.chain(chainstr)
+        self.final_hop(packet, chain.pop())
+        self.intermediate_hops(packet, chain)
+        return self.packet2mail(packet)
 
     def final_hop(self, packet, node):
         # packet must be an object with a dbody scalar.
@@ -263,27 +275,32 @@ class Mixmaster(object):
         packet.dbody = desobj.encrypt(packet.dbody)
         # The remailer that will pass messages to this remailer needs to
         # know the email address of the node to pass it to.
-        nextaddy = rem_data[1]
-        return packet, headers, nextaddy
+        packet.nextaddy = rem_data[1]
+        packet.headers = headers
 
-    def intermediate_hops(self, packet, headers, chain, nextaddy):
+    def intermediate_hops(self, packet, chain):
         # packet must be an object with a dbody scalar.
         assert hasattr(packet, "dbody")
+        assert hasattr(packet, "headers")
+        assert hasattr(packet, "nextaddy")
+        # When compiling intermediate headers, there must already be one, and
+        # only one header; the exit header.
+        assert len(packet.headers) == 1
         while len(chain) > 0:
-            numheads = len(headers)
+            numheads = len(packet.headers)
             thishop = chain.pop()
             rem_data = self.randnode(name=thishop)
             # This uses the rem_data list to pass the next hop address
             # to the pktinfo section of Intermediate messages.
-            rem_data.append(nextaddy)
-            assert rem_data[6] == nextaddy
+            rem_data.append(packet.nextaddy)
+            assert rem_data[6] == packet.nextaddy
             outer = OuterHeader(rem_data, 0)
             header = outer.make_header()
             for h in range(numheads):
                 desobj = DES3.new(outer.inner.des3key,
                                   DES3.MODE_CBC,
                                   IV=outer.inner.pktinfo.ivs[h])
-                headers[h] = desobj.encrypt(headers[h])
+                packet.headers[h] = desobj.encrypt(packet.headers[h])
             # All the headers are sorted, now we need to encrypt the payload
             # with the same IV as the final header.
             desobj = DES3.new(outer.inner.des3key,
@@ -291,31 +308,34 @@ class Mixmaster(object):
                               IV=outer.inner.pktinfo.ivs[18])
             packet.dbody = desobj.encrypt(packet.dbody)
             assert len(packet.dbody) == 10240
-            headers.insert(0, header)
-            nextaddy = rem_data[0]
-        pad = Crypto.Random.get_random_bytes((20 - len(headers)) * 512)
-        header = ''.join(headers) + pad
-        assert len(header) == 10240
+            packet.headers.insert(0, header)
+            packet.nextaddy = rem_data[0]
+        pad = Crypto.Random.get_random_bytes((20 - len(packet.headers)) * 512)
+        packet.payload = ''.join(packet.headers) + pad + packet.dbody
+        assert len(packet.payload) == 20480
+
+    def packet2mail(self, packet):
         msgobj = email.message.Message()
-        # We always want to sent the message to the outer-most remailer.
+        # We always want to send the message to the outer-most remailer.
         # Outer-most implies, the last remailer we encoded to.
-        msgobj.add_header('To', nextaddy)
-        msgobj.set_payload(mixprep(header + packet.dbody))
+        msgobj.add_header('To', packet.nextaddy)
+        msgobj.set_payload(mixprep(packet.payload))
         return msgobj
 
     def randnode(self, name=None, exit=False):
-        # pubring[0]    Email Address
-        # pubring[1]    Key ID (Hex encoded)
-        # pubring[2]    Version
-        # pubring[3]    Capabilities
-        # pubring[4]    Pycrypto Key Object
+        # pubring[0]    Shortname
+        # pubring[1]    Email Address
+        # pubring[2]    Key ID (Hex encoded)
+        # pubring[3]    Pycrypto Key Object
+        # pubring[4]    Version
+        # pubring[4]    Capstring
         if name is None:
             if exit:
                 name = self.chain.randexit()
             else:
                 name = self.chain.randany()
         rem_data = self.pubring[name]
-        log.debug("Retrieved Pubkey data for: %s <%s>", name, rem_data[0])
+        log.debug("Retrieved Pubkey data for: %s <%s>", name, rem_data[1])
         return rem_data
 
 
@@ -365,4 +385,4 @@ if (__name__ == "__main__"):
     payload = Payload(msg)
     payload.email2payload()
     outmsg = encode.makemsg(payload)
-    encode.dummy()
+    #encode.dummy()
