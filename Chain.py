@@ -133,8 +133,10 @@ class Chain():
         if chainnum > 20:
             # Mixmaster only deals with chains of up to 20 Remailers
             raise ChainError("Max Chain length exceeded")
-        # Create a list of all known remailers
-        remailers = self.candidates(0, 5999, 0)
+        # Create a list of all known remailers.  This list is based on nodes
+        # known in the Pubring as there's no point selecting nodes we cannot
+        # encrypt messages to.
+        remailers = self.pubring.get_names()
         # This loop validates that each of the remailers specified in the
         # chain do at least exist.
         for rem in chainlist:
