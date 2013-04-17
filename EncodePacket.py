@@ -103,7 +103,7 @@ class InnerHeader():
         des3key = Crypto.Random.get_random_bytes(24)
         timestamp = "0000\x00" + struct.pack('<H', timing.epoch_days())
         if self.msgtype == 0:
-            pktinfo = self.pktinfo.intermediate_hop(self.rem_data['email'])
+            pktinfo = self.pktinfo.intermediate_hop(self.rem_data['nextaddy'])
         elif self.msgtype == 1:
             pktinfo = self.pktinfo.final_hop()
         elif self.msgtype == 2:
