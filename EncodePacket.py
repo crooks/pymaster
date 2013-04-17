@@ -265,7 +265,7 @@ class Mixmaster(object):
         # packet must be an object with a dbody scalar.
         assert hasattr(packet, "dbody")
         # First create the payload and the header for it.
-        rem_data = self.randnode(name=node)
+        rem_data = self.nodedata(name=node)
         outer = OuterHeader(rem_data, 1)
         # This is always the first header so it creates the list of headers.
         headers = [outer.make_header()]
@@ -289,7 +289,7 @@ class Mixmaster(object):
         while len(chain) > 0:
             numheads = len(packet.headers)
             thishop = chain.pop()
-            rem_data = self.randnode(name=thishop)
+            rem_data = self.nodedata(name=thishop)
             # This uses the rem_data dict to pass the next hop address
             # to the pktinfo section of Intermediate messages.
             rem_data['nextaddy'] = packet.nextaddy
@@ -321,7 +321,10 @@ class Mixmaster(object):
         msgobj.set_payload(mixprep(packet.payload))
         return msgobj
 
-    def randnode(self, name=None, exit=False):
+    def nodedata(self, name=None, exit=False):
+        """Select a remailer by shortname (or email) and return the dictionary
+           object stored in the Pubring for that remailer.
+        """
         if name is None:
             if exit:
                 name = self.chain.randexit()
