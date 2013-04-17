@@ -33,12 +33,11 @@ import timing
 from Config import config
 
 
-
 class KeyUtils():
     def ishex(self, s):
         """Validate a string contains only Hex chars.
         """
-        return not set(s.lower())-set('0123456789abcdef')
+        return not set(s.lower()) - set('0123456789abcdef')
 
     def wrap(self, s, n):
         """Take a string and wrap it to lines of length n.
@@ -89,12 +88,14 @@ class KeyUtils():
 
     # Iterative Algorithm (xgcd)
     def iterative_egcd(self, a, b):
-        x,y, u,v = 0,1, 1,0
+        x, y, u, v = 0, 1, 1, 0
         while a != 0:
-            q,r = b//a,b%a; m,n = x-u*q,y-v*q # use x//y for floor "floor division"
-            b,a, x,y, u,v = a,r, u,v, m,n
+            # use x//y for floor "floor division"
+            q, r = b // a, b % a
+            m, n = x - u * q, y - v * q
+            b, a, x, y, u, v = a, r, u, v, m, n
         return b, x, y
-     
+
     # Recursive Algorithm
     def recursive_egcd(self, a, b):
         """Returns a triple (g, x, y), such that ax + by = g = gcd(a,b).
@@ -105,9 +106,9 @@ class KeyUtils():
         else:
             g, y, x = self.recursive_egcd(b % a, a)
             return (g, x - (b // a) * y, y)
-     
+
     def modinv(self, a, m):
-        g, x, y = self.iterative_egcd(a, m) 
+        g, x, y = self.iterative_egcd(a, m)
         if g != 1:
             return None
         else:
@@ -163,7 +164,7 @@ class Secring(KeyUtils):
                 del self.cache[keyid]
                 return None
         return key
-        
+
     def test(self):
         """ This test demonstrates why Mixmaster cannot use bigger RSA keys.
         If the key size is increased from 1024 to 2048 Bytes, the 24 Byte
@@ -276,7 +277,7 @@ class Secring(KeyUtils):
         assert len(secret) == 706
         secret += "\x00" * (712 - len(secret))
         return secret, public
-        
+
     def read_secring(self, ignore_date=True):
         """Read a secring.mix file and return the decryted keys.  This
         function relies on construct() to create an RSAobj.
@@ -382,7 +383,8 @@ class Pubring(KeyUtils):
             raise PubringError("%s: Pubring not found" % pubring)
         self.keyfile = keyfile
         self.read_pubring()
-        log.info("Initialized Pubring. Path=%s, Keys=%s", keyfile, len(self.cache))
+        log.info("Initialized Pubring. Path=%s, Keys=%s",
+                 keyfile, len(self.cache))
 
     def __getitem__(self, name):
         # header[0] Shortname
@@ -404,18 +406,18 @@ class Pubring(KeyUtils):
                 # Give up now, the requested key doesn't exist in this
                 # Pubring.
                 raise PubringError("%s: Public Key not found" % name)
-        if len(self.cache[name]) == 8:
+        if ('validto' in self.cache[name] and
+            self.date_expired(self.cache[name]['validto'])):
             # This is a later style Mixmaster key so we can try to validate
             # the dates on it.
-            if self.date_expired(self.cache[name][7]):
-                log.info("Key for %s has expired.  Deleting it from the "
-                         "cache.", self.cache[name][0])
-                # Public Key has expired.
-                del self.cache[name]
-                return None
+            log.info("Key for %s has expired.  Deleting it from the "
+                     "cache.", self.cache[name]['shortname'])
+            # Public Key has expired.
+            del self.cache[name]
+            return None
         # Only return the first five elements.  Nothing cares about the dates
         # after validation has happened.
-        return self.cache[name][0:6]
+        return self.cache[name]
 
     def get_addresses(self):
         return self.cache.keys()
@@ -443,34 +445,27 @@ class Pubring(KeyUtils):
         assert len(mix) == 2 + 128 + 128
         return self.wrap(mix.encode("base64"), 40)
 
-    def header_validate(self, header):
+    def header_validate(self, remailer):
         """Perform crude validation that a header line complies with what's
            expected in a pubring.mix file.
         """
         valid = True
-        # Standard headers are:-
-        # header[0] Short Name
-        # header[1] Email Address
-        # header[2] KeyID
-        # header[3] Mixmaster Version
-        # header[4] Capstring
-        if len(header[0]) > 12:
+        if len(remailer['shortname']) > 12:
             valid = False
-        if len(header[1]) < 3 or len(header[1]) > 80:
+        if len(remailer['email']) < 3 or len(remailer['email']) > 80:
             valid = False
-        if not '@' in header[1]:
+        if not '@' in remailer['email']:
             valid = False
-        if len(header[2]) != 32:
+        if len(remailer['keyid']) != 32:
             valid = False
-        if not self.ishex(header[2]):
+        if not self.ishex(remailer['keyid']):
             valid = False
-        if len(header) == 7:
+        if ('validfrom' in remailer and
+            self.date_prevalid(remailer['validfrom'])):
             # Mixmaster > v3.0 enable validation of key date validity.
-            # header[5] Valid From Date
-            # header[6] Expire Date
-            if self.date_prevalid(header[5]):
                 valid = False
-            if self.date_expired(header[6]):
+        if ('validto' in remailer and
+            self.date_expired(remailer['validto'])):
                 valid = False
         return valid
 
@@ -483,7 +478,7 @@ class Pubring(KeyUtils):
         else:
             log.debug("%s: Request to recache ignored.  File has not been "
                       "modified since last cache.", self.keyfile)
-        
+
     def read_pubring(self):
         """Read the Public Keyring file and cache the results in a dictionary,
            keyed by email address.  In addition, create an index of shortnames
@@ -514,7 +509,21 @@ class Pubring(KeyUtils):
                 header = line.split(" ")
                 if len(header) == 5 or len(header) == 7:
                     # A valid header will always have 5 or 7 elements.
-                    gothead = self.header_validate(header)
+                    # Standard headers are:-
+                    # header[0] Short Name
+                    # header[1] Email Address
+                    # header[2] KeyID
+                    # header[3] Mixmaster Version
+                    # header[4] Capstring
+                    remailer = {'shortname': header[0],
+                                'email':     header[1],
+                                'keyid':     header[2],
+                                'version':   header[3],
+                                'capstring': header[4]}
+                    if len(header) == 7:
+                        remailer['validfrom'] = header[5]
+                        remailer['validto'] = header[6]
+                    gothead = self.header_validate(remailer)
                     if gothead:
                         headline = line
             elif (gothead and not inkey and
@@ -534,11 +543,11 @@ class Pubring(KeyUtils):
                     # in the list.  No good reason, other than it needs to be
                     # inserted at some fixed point and the total length is
                     # varible, depending on whether dates are present.
-                    header.insert(3, self.pub_construct(key))
+                    remailer['keyobj'] = self.pub_construct(key)
                     # Here we key the cache by remailer email address.
-                    cache[header[1]] = header
+                    cache[remailer['email']] = remailer
                     # Populate the shortname index.
-                    snindex[header[0]] = header[1]
+                    snindex[remailer['shortname']] = remailer['email']
                     gothead = False
                     inkey = False
             elif gothead and inkey:

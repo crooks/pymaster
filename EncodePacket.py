@@ -103,7 +103,7 @@ class InnerHeader():
         des3key = Crypto.Random.get_random_bytes(24)
         timestamp = "0000\x00" + struct.pack('<H', timing.epoch_days())
         if self.msgtype == 0:
-            pktinfo = self.pktinfo.intermediate_hop(self.rem_data[5])
+            pktinfo = self.pktinfo.intermediate_hop(self.rem_data['email'])
         elif self.msgtype == 1:
             pktinfo = self.pktinfo.final_hop()
         elif self.msgtype == 2:
@@ -144,14 +144,14 @@ class OuterHeader():
         self.inner = InnerHeader(rem_data, msgtype)
 
     def make_header(self):
-        keyid = self.rem_data[2].decode('hex')
+        keyid = self.rem_data['keyid'].decode('hex')
         # This 3DES key and IV are only used to encrypt the 328 Byte Inner
         # Header.  The 3DES key is then RSA Encrypted using the Remailer's
         # Public key.
         des3key = Crypto.Random.get_random_bytes(24)
         iv = Crypto.Random.get_random_bytes(8)
         desobj = DES3.new(des3key, DES3.MODE_CBC, IV=iv)
-        pkcs1 = PKCS1_v1_5.new(self.rem_data[3])
+        pkcs1 = PKCS1_v1_5.new(self.rem_data['keyobj'])
         rsakey = pkcs1.encrypt(des3key)
         # Why does Mixmaster record the RSA data length when the spec
         # allows for nothing but 1024 bit keys?
@@ -275,7 +275,7 @@ class Mixmaster(object):
         packet.dbody = desobj.encrypt(packet.dbody)
         # The remailer that will pass messages to this remailer needs to
         # know the email address of the node to pass it to.
-        packet.nextaddy = rem_data[1]
+        packet.nextaddy = rem_data['email']
         packet.headers = headers
 
     def intermediate_hops(self, packet, chain):
@@ -290,10 +290,9 @@ class Mixmaster(object):
             numheads = len(packet.headers)
             thishop = chain.pop()
             rem_data = self.randnode(name=thishop)
-            # This uses the rem_data list to pass the next hop address
+            # This uses the rem_data dict to pass the next hop address
             # to the pktinfo section of Intermediate messages.
-            rem_data.append(packet.nextaddy)
-            assert rem_data[6] == packet.nextaddy
+            rem_data['nextaddy'] = packet.nextaddy
             outer = OuterHeader(rem_data, 0)
             header = outer.make_header()
             for h in range(numheads):
@@ -309,7 +308,7 @@ class Mixmaster(object):
             packet.dbody = desobj.encrypt(packet.dbody)
             assert len(packet.dbody) == 10240
             packet.headers.insert(0, header)
-            packet.nextaddy = rem_data[0]
+            packet.nextaddy = rem_data['email']
         pad = Crypto.Random.get_random_bytes((20 - len(packet.headers)) * 512)
         packet.payload = ''.join(packet.headers) + pad + packet.dbody
         assert len(packet.payload) == 20480
@@ -323,19 +322,14 @@ class Mixmaster(object):
         return msgobj
 
     def randnode(self, name=None, exit=False):
-        # pubring[0]    Shortname
-        # pubring[1]    Email Address
-        # pubring[2]    Key ID (Hex encoded)
-        # pubring[3]    Pycrypto Key Object
-        # pubring[4]    Version
-        # pubring[4]    Capstring
         if name is None:
             if exit:
                 name = self.chain.randexit()
             else:
                 name = self.chain.randany()
         rem_data = self.pubring[name]
-        log.debug("Retrieved Pubkey data for: %s <%s>", name, rem_data[1])
+        log.debug("Retrieved Pubkey data for: %s <%s>",
+                  name, rem_data['email'])
         return rem_data
 
 
