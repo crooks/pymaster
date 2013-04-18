@@ -242,8 +242,7 @@ class Mixmaster(object):
         packet.email2payload()
         # The chain comprises two hops; the first is the local remailer, the
         # second a randomly selected node.
-        self.final_hop(packet, chain.pop())
-        self.intermediate_hops(packet, chain)
+        self.final_hop(packet, chain)
         f = open(Utils.pool_filename('m'), 'wb')
         f.write(packet.payload)
         f.close()
@@ -253,7 +252,7 @@ class Mixmaster(object):
            a dbody (decrypted body) scalar.  This is the only part needed for
            randhopping.
         """
-        exitnode = self.chain.randexit()
+        exitnode = self.chain.get_exit()
         return self.makemsg(packet, chainstr=exitnode)
 
     def makemsg(self, packet, chainstr=None):
@@ -338,9 +337,9 @@ class Mixmaster(object):
         """
         if name is None:
             if exit:
-                name = self.chain.randexit()
+                name = self.chain.get_exit()
             else:
-                name = self.chain.randany()
+                name = self.chain.get_node()
         rem_data = self.pubring[name]
         log.debug("Retrieved Pubkey data for: %s <%s>",
                   name, rem_data['email'])

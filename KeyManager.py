@@ -393,19 +393,20 @@ class Pubring(KeyUtils):
         # header[3] RSA Key Object
         # header[4] Mixmaster Version
         # header[5] Capstring
+        if not name in self.snindex and not name in self.cache:
+            # If the requested Public Key isn't in the Cache, re-read the
+            # pubring.mix file.
+            log.debug("Unknown remailer %s.  Trying to repopulate the Public "
+                      "Key cache.", name)
+            self.recache()
         if name in self.snindex:
             # Check if the requested name is a shortname.  If it is, change
             # the request to the corresponding email address.
             name = self.snindex[name]
         if not name in self.cache:
-            print "Name not in cache"
-            # If the requested Public Key isn't in the Cache, retry reading it
-            # from the pubring.mix file.
-            self.recache()
-            if not name in self.cache:
-                # Give up now, the requested key doesn't exist in this
-                # Pubring.
-                raise PubringError("%s: Public Key not found" % name)
+            # Give up now, the requested key doesn't exist in this
+            # Pubring.
+            raise PubringError("%s: Public Key not found" % name)
         if ('validto' in self.cache[name] and
             self.date_expired(self.cache[name]['validto'])):
             # This is a later style Mixmaster key so we can try to validate

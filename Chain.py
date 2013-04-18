@@ -38,6 +38,10 @@ class Chain():
         self.mlist2 = mlist2
         self.shortname = config.get('general', 'shortname')
         self.pubring = pubring
+        # The following two variables define the time when the statfile was
+        # last modified.
+        self.exittime = 0
+        self.nodetime = 0
         log.info("Chain handler initialised. Stats=%s", mlist2)
 
     def _striplist(self, l):
@@ -56,7 +60,6 @@ class Chain():
         """Returns a list of remailer shortnames, where each remailer meets
         the latency, uptime and exit conditions requested.
         """
-
         f = open(self.mlist2, 'r')
         instats = False
         remailers = []
@@ -93,35 +96,60 @@ class Chain():
         f.close()
         return remailers
 
-    def randexit(self):
-        """Select a random exit node.  This is used in Chain construction and
-        also, when Randhopping, to select the Randhop node.
+    def get_exit(self):
+        """Return a randomly selected exit remailer node.  The function also
+           checks if the mlist2 file has been updated since it was last
+           cached.  If it has been updated, the cache is repopulated using
+           the file content.
         """
-        exits = self.candidates(config.getint('chain', 'minlat'),
-                                config.getint('chain', 'maxlat'),
-                                config.getfloat('chain', 'relfinal'),
-                                exit=True)
-        exitnum = len(exits)
-        if exitnum == 0:
-            raise ChainError("No candidate Exit Remailers")
-        exit = exits[self._randint(exitnum - 1)]
+        if os.path.getmtime(self.mlist2) > self.exittime:
+            log.debug("Repopulating exit remailer cache.")
+            # Stats have been updated since we last cached them.
+            exits = self.candidates(config.getint('chain', 'minlat'),
+                                    config.getint('chain', 'maxlat'),
+                                    config.getfloat('chain', 'relfinal'),
+                                    exit=True)
+            exitnum = len(exits)
+            if exitnum == 0:
+                raise ChainError("No candidate exit remailers")
+            self.exits = exits
+            self.exittime = os.path.getmtime(self.mlist2)
+        exit = self.exits[self._randint(len(self.exits) - 1)]
         log.debug("Selected random exit: %s", exit)
         return exit
 
-    def randany(self):
-        """Like randexit but pick any random node, not just exits.
+    def shuffle_nodes(self):
+        """The Pycrypto shuffle function does an inline shuffle.  It probably
+           wouldn't hurt to do that for our purposes but I prefer to copy the
+           list, shuffle it and return the new list.
         """
-        remailers = self.candidates(0, 5999, 0)
-        # Remove the local remailer from the list.  On no occasions
-        # do we want to randomly select the local node.
-        if self.shortname in remailers:
-            remailers.remove(self.shortname)
-        remcount = len(remailers)
-        if remcount == 0:
-            raise ChainError("No candidate remailers")
-        remailer = remailers[self._randint(remcount - 1)]
-        log.debug("Select random node: %s", remailer)
-        return remailer
+        nodecopy = list(self.nodes)
+        Crypto.Random.random.shuffle(nodecopy)
+        return nodecopy
+
+    def get_node(self):
+        """As with get_exit but this function returns any candidate remailer,
+           not just an exit node.
+        """
+        # TODO There is a slight danger that shuffle_nodes could be called
+        # before this function has executed. This would be bad as self.nodes
+        # wouldn't be populated at that time.  Currently this cannot happen
+        # as the only call to shuffle_nodes is preceeded by a get_node call. 
+        if os.path.getmtime(self.mlist2) > self.nodetime:
+            log.debug("Repopulating remailer node cache.")
+            # Stats have been updated since we last cached them.
+            nodes = self.candidates(config.getint('chain', 'minlat'),
+                                    config.getint('chain', 'maxlat'),
+                                    config.getfloat('chain', 'relfinal'),
+                                    exit=False)
+            nodenum = len(nodes)
+            if nodenum == 0:
+                raise ChainError("No candidate remailers.")
+            self.nodes = nodes
+            self.nodetime = os.path.getmtime(self.mlist2)
+        node = self.nodes[self._randint(len(self.nodes) - 1)]
+        log.debug("Selected random node: %s", node)
+        return node
 
     def chain(self, chainstr=None):
         if chainstr is None:
@@ -145,7 +173,7 @@ class Chain():
         # Assign an exit node.  We do this first in order to ensure all the
         # exits don't get gobbled up as Middles.
         if chainlist[-1] == "*":
-            chainlist[-1] = self.randexit()
+            chainlist[-1] = self.get_exit()
         if not "*" in chainlist:
             # We require no random Middleman Remailers so bail out before the
             # time consuming node selection process.
@@ -153,13 +181,6 @@ class Chain():
         # Distance defines how close together within a chain the same node
         # can manifiest.
         distance = config.getint('chain', 'distance')
-        # Middleman candidates
-        middles = self.candidates(config.getint('chain', 'minlat'),
-                                  config.getint('chain', 'maxlat'),
-                                  config.getfloat('chain', 'minrel'))
-        midnum = len(middles)
-        if midnum == 0:
-            raise ChainError("No candidate Middleman Remailers")
         # Iterate over the element numbers within the chain.
         for n in range(chainnum):
             if chainlist[n] != "*":
@@ -173,8 +194,8 @@ class Chain():
             if exclude_upper > chainnum:
                 exclude_upper = chainnum
             excludes = chainlist[exclude_lower:exclude_upper]
-            # Quick option first.  Grab a random Middleman
-            new_node = middles[self._randint(midnum - 1)]
+            # Quick option first.  Grab a random Middleman.
+            new_node = self.get_node()
             if new_node in excludes:
                 # Quick grab didn't work, the randomly selected node is in the
                 # excluded nodes list.
@@ -182,8 +203,8 @@ class Chain():
                 # Shuffle the list of Middleman Remailers and then test each
                 # node in turn against the excluded nodes.  THe first node
                 # that isn't excluded will be selected.
-                Crypto.Random.random.shuffle(middles)
-                for new_node in middles:
+                nodes = self.shuffle_nodes()
+                for new_node in nodes:
                     if new_node not in excludes:
                         gotnode = True
                         break
@@ -200,13 +221,16 @@ if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
     log = logging.getLogger("Pymaster")
-    log.setLevel(logging.DEBUG)
+    log.setLevel(logging.WARN)
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
     import KeyManager
+    import time
     pubring = KeyManager.Pubring()
     c = Chain(pubring)
-    print c.chain("*, austria, *, *, *")
-    print "Random Node: %s" % c.randany()
-    print "Random Exit: %s" % c.randexit()
+    start = time.time()
+    for n in range(500):
+        c.chain("*, austria, *, *, *")
+    end = time.time()
+    print "Elapsed time: %s" % (end - start)
