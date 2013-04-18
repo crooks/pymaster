@@ -141,7 +141,7 @@ class Chain():
         # chain do at least exist.
         for rem in chainlist:
             if rem is not "*" and rem not in remailers:
-                raise ChainError("%s: Unknown hardcoded remailer" % rem)
+                raise ChainError("Unknown hardcoded remailer: %s" % rem)
         # Assign an exit node.  We do this first in order to ensure all the
         # exits don't get gobbled up as Middles.
         if chainlist[-1] == "*":

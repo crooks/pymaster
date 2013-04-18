@@ -223,6 +223,11 @@ class Mixmaster(object):
         self.dummychain = "%s,*" % config.get('general', 'shortname')
 
     def dummy(self):
+        try:
+            chain = self.chain.chain(self.dummychain)
+        except Chain.ChainError, e:
+            log.warn("Dummy sending failed: %s", e)
+            return 0
         msg = email.message.Message()
         # payload size is arbitrary as the payload class pads it with random
         # data to a length of 10240.
@@ -237,7 +242,6 @@ class Mixmaster(object):
         packet.email2payload()
         # The chain comprises two hops; the first is the local remailer, the
         # second a randomly selected node.
-        chain = self.chain.chain(self.dummychain)
         self.final_hop(packet, chain.pop())
         self.intermediate_hops(packet, chain)
         f = open(Utils.pool_filename('m'), 'wb')
@@ -257,14 +261,18 @@ class Mixmaster(object):
             chain = self.chain.chain()
         else:
             chain = self.chain.chain(chainstr)
-        self.final_hop(packet, chain.pop())
-        self.intermediate_hops(packet, chain)
+        if len(packet.dbody) <= 10240:
+            self.final_hop(packet, chain)
+        else:
+            #TODO We don't yet handle chunk message creation
+            pass
         return self.packet2mail(packet)
 
-    def final_hop(self, packet, node):
+    def final_hop(self, packet, chain):
         # packet must be an object with a dbody scalar.
         assert hasattr(packet, "dbody")
-        # First create the payload and the header for it.
+        # The last node in the chain is the final hop.
+        node = chain.pop()
         rem_data = self.nodedata(name=node)
         outer = OuterHeader(rem_data, 1)
         # This is always the first header so it creates the list of headers.
@@ -277,6 +285,9 @@ class Mixmaster(object):
         # know the email address of the node to pass it to.
         packet.nextaddy = rem_data['email']
         packet.headers = headers
+        # For every final hop we need to call intermediate_hops.  Even if
+        # there are no intermediates, the message will be padded and prepared.
+        self.intermediate_hops(packet, chain)
 
     def intermediate_hops(self, packet, chain):
         # packet must be an object with a dbody scalar.
