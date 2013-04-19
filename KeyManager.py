@@ -393,19 +393,13 @@ class Pubring(KeyUtils):
         # header[3] RSA Key Object
         # header[4] Mixmaster Version
         # header[5] Capstring
-        if not name in self.snindex and not name in self.cache:
-            # If the requested Public Key isn't in the Cache, re-read the
-            # pubring.mix file.
-            log.debug("Unknown remailer %s.  Trying to repopulate the Public "
-                      "Key cache.", name)
-            self.recache()
+        self.recache()
         if name in self.snindex:
-            # Check if the requested name is a shortname.  If it is, change
-            # the request to the corresponding email address.
+            # The requested name is a shortname.  Change the request to the
+            # corresponding email address.
             name = self.snindex[name]
         if not name in self.cache:
-            # Give up now, the requested key doesn't exist in this
-            # Pubring.
+            # The requested name isn't a know remailer email address.
             raise PubringError("%s: Public Key not found" % name)
         if ('validto' in self.cache[name] and
             self.date_expired(self.cache[name]['validto'])):
@@ -415,15 +409,16 @@ class Pubring(KeyUtils):
                      "cache.", self.cache[name]['shortname'])
             # Public Key has expired.
             del self.cache[name]
-            return None
-        # Only return the first five elements.  Nothing cares about the dates
-        # after validation has happened.
+            raise PubringError("%s: Public Key has expired" % name)
+        # Return the dictionary relating to the requested name.
         return self.cache[name]
 
     def get_addresses(self):
+        self.recache()
         return self.cache.keys()
 
     def get_names(self):
+        self.recache()
         return self.snindex.keys()
 
     def pub_construct(self, key):
@@ -476,9 +471,6 @@ class Pubring(KeyUtils):
         if os.path.getmtime(self.keyfile) > self.mtime:
             log.debug("%s modified. Recreating rules.", self.keyfile)
             self.read_pubring()
-        else:
-            log.debug("%s: Request to recache ignored.  File has not been "
-                      "modified since last cache.", self.keyfile)
 
     def read_pubring(self):
         """Read the Public Keyring file and cache the results in a dictionary,
