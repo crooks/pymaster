@@ -69,7 +69,8 @@ class MailMessage():
             except MailError, e:
                 log.info("Mail Error: %s", e)
             self.inbox.remove(k)
-        log.info("Mail processing complete. Processed=%s, Pooled=%s, Text=%s, Failed=%s",
+        log.info("Mail processing complete. Processed=%s, Pooled=%s, "
+                 "Text=%s, Failed=%s",
                   len(messages), self.added_to_pool, self.remailer_foo_msgs,
                   self.failed_msgs)
         self.inbox.close()

@@ -281,6 +281,8 @@ class Mixmaster():
             length, dfields = struct.unpack('<IB', packet.dbody[sbyte:ebyte])
             if dfields > 20:
                 raise ValidationError("Too many Destination fields")
+            if dfields < 1:
+                raise ValidationError("No destination fields")
             dest_struct = "80s" * dfields
             sbyte = ebyte
             ebyte = sbyte + (80 * dfields)
@@ -485,6 +487,7 @@ class ConfFiles():
                          regex_test.group(0))
                 return True
         return False
+
 
 class IDLog():
     """This class is concerned with logging Packet ID's in order to prevent
