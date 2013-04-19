@@ -286,7 +286,7 @@ class Mixmaster():
             ebyte = sbyte + (80 * dfields)
             destlist = list(struct.unpack(dest_struct,
                             packet.dbody[sbyte:ebyte]))
-            if destlist[0].startswith("null:"):
+            if len(destlist) >= 1 and destlist[0].startswith("null:"):
                 raise DummyMessage("Dummy message")
             dests = self.dest_allow(destlist)
             if len(dests) == 0:
