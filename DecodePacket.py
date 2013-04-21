@@ -89,15 +89,16 @@ class MixPacket(object):
         self.dbody = dbody
 
 
-class MixMail(object):
-    """This class is concerned with taking a Mixmaster email message and
-       converting it into a 20480 Byte Mixmaster packet.
-    """
-    def set_packet(self, packet):
-        self.packet = packet
-
-    def get_packet(self):
-        return self.packet
+class Mixmaster():
+    def __init__(self, secring, idlog):
+        self.destalw = ConfFiles(config.get('etc', 'dest_alw'))
+        self.destblk = ConfFiles(config.get('etc', 'dest_blk'))
+        self.headalw = ConfFiles(config.get('etc', 'head_alw'))
+        self.headblk = ConfFiles(config.get('etc', 'head_blk'))
+        self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
+        self.middleman = config.getboolean('general', 'middleman')
+        self.secring = secring
+        self.idlog = idlog
 
     def email2packet(self, msgobj):
         """-----BEGIN REMAILER MESSAGE-----
@@ -135,47 +136,11 @@ class MixMail(object):
             raise ValidationError("Incorrect packet length")
         if digest != MD5.new(data=packet).digest():
             raise ValidationError("Mixmaster message digest failed")
-        self.set_packet(packet)
-        return True
-
-    def packet2pool(self):
-        """Write a Mixmaster binary packet to the pool.
-        """
-        f = open(Utils.pool_filename('m'), 'wb')
-        f.write(self.get_packet())
-        f.close()
-
-
-class Mixmaster():
-    def __init__(self, secring, idlog):
-        self.destalw = ConfFiles(config.get('etc', 'dest_alw'))
-        self.destblk = ConfFiles(config.get('etc', 'dest_blk'))
-        self.headalw = ConfFiles(config.get('etc', 'head_alw'))
-        self.headblk = ConfFiles(config.get('etc', 'head_blk'))
-        self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
-        self.middleman = config.getboolean('general', 'middleman')
-        self.secring = secring
-        self.idlog = idlog
-
-    def process(self, packet):
-        self.msg = email.message.Message()
-        # Decrypt the 328 byte Encrypted Header
-        self.packet_decrypt(packet)
-        self.unpack(packet)
-        return self.msg
-
-    def get_payload(self, filename):
-        f = open(filename, 'rb')
-        packet = f.read()
-        f.close()
-        if len(packet) != 20480:
-            log.warn("Only correctly sized payloads should make it into the "
-                     "Pool.  Somehow this message slipped through.")
-            raise ValidationError("Incorrect packet size in pool")
         # This is the only place a Mixmaster Packet object is created.
         packobj = MixPacket()
         packobj.unpack(packet)
         return packobj
+
 
     def packet_decrypt(self, packet):
         """Unpack a received Mixmaster email message header.  The spec calls
@@ -218,6 +183,10 @@ class Mixmaster():
            Random padding               [fill to 328 bytes]
         """
         assert len(packet.dhead) == 328
+        # Here we set up the email message object that will eventually be
+        # returned.  Regardless of the message type, the output will always
+        # be an email message.
+        msg = email.message.Message()
         (packetid,
          deskey,
          packet_type) = struct.unpack("@16s24sB", packet.dhead[0:41])
@@ -234,7 +203,7 @@ class Mixmaster():
             ivs = struct.unpack(fmt, packet.dhead[41:193])
             addy = packet.dhead[193:273].rstrip("\x00")
             log.debug("Next hop is: %s", addy)
-            self.msg.add_header("To", addy)
+            msg.add_header("To", addy)
             # The payload string will be extended as each header has a layer of
             # encryption striped off.
             payload = ""
@@ -258,7 +227,7 @@ class Mixmaster():
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=ivs[18])
             payload += desobj.decrypt(packet.encbody)
             assert len(payload) == 20480
-            self.msg.set_payload(self.mixprep(payload))
+            msg.set_payload(self.mixprep(payload))
         elif packet_type == 1:
             """Packet type 1 (final hop):
                Message ID                     [ 16 bytes]
@@ -295,7 +264,7 @@ class Mixmaster():
                 raise ValidationError("No acceptable destinations for this "
                                       "message")
             desthead = ','.join(dests)
-            self.msg["To"] = desthead
+            msg["To"] = desthead
             # At this point we have established a list of acceptable
             # email destinations.
             sbyte = ebyte
@@ -306,12 +275,13 @@ class Mixmaster():
             ebyte = sbyte + 80 * hfields
             headlist = list(struct.unpack(head_struct,
                                           packet.dbody[sbyte:ebyte]))
-            self.heads_allow(headlist)
+            #TODO Header checking needs to be sorted out.
+            #self.heads_allow(headlist)
             sbyte = ebyte
             # The length of the message is prepended by the 4 Byte length,
             # hence why we need to add 4 to ebyte.
             ebyte = length + 4
-            self.msg.set_payload(packet.dbody[sbyte:ebyte])
+            msg.set_payload(packet.dbody[sbyte:ebyte])
         elif packet_type == 2:
             """Packet type 2 (final hop, partial message):
                Chunk number                   [  1 byte ]
@@ -321,6 +291,8 @@ class Mixmaster():
             """
             log.debug("This is a chunk-type message")
             self.validate(packet, 67)
+        assert 'To' in msg
+        return msg
 
     def chunk_message(self, packet):
         """Packet type 2 (final hop, partial message):

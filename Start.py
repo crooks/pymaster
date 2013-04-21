@@ -48,19 +48,27 @@ class PayloadError(Exception):
 
 
 class MailMessage():
-    def __init__(self, pubring):
+    def __init__(self, pubring, secring, idlog, encode):
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
+        decode = DecodePacket.Mixmaster(secring, idlog)
+        self.decode = decode
         self.server = config.get('mail', 'server')
         self.pubring = pubring
+        self.idlog = idlog
+        self.encode = encode
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
                   maildir, self.server)
 
     def iterate_mailbox(self):
+        # This has nothing to do with mailbox iteration but for now, it's a
+        # reasonable point at which to prune the idlog.
+        self.idlog.prune()
         log.debug("Beginning mailbox processing")
         self.smtp = smtplib.SMTP(self.server)
         messages = self.inbox.keys()
         self.added_to_pool = 0
+        self.dummy_msgs = 0
         self.remailer_foo_msgs = 0
         self.failed_msgs = 0
         for k in messages:
@@ -68,20 +76,25 @@ class MailMessage():
                 self.mail2pool(k)
             except MailError, e:
                 log.info("Mail Error: %s", e)
+                self.failed_msgs += 1
             self.inbox.remove(k)
         log.info("Mail processing complete. Processed=%s, Pooled=%s, "
-                 "Text=%s, Failed=%s",
+                 "Text=%s, dummies=%s, Failed=%s",
                   len(messages), self.added_to_pool, self.remailer_foo_msgs,
-                  self.failed_msgs)
+                  self.dummy_msgs, self.failed_msgs)
         self.inbox.close()
         self.smtp.quit()
+        self.idlog.sync()
 
     def mail2pool(self, msgkey):
+        # The following lines read an email file and store it as a Python
+        # email object.
         mailfile = self.inbox.get_file(msgkey)
         msg = email.message_from_file(mailfile)
         mailfile.close()
-        mixmail = DecodePacket.MixMail()
         name, addy = email.utils.parseaddr(msg['From'])
+        # TODO the following file write is for debugging purposes during
+        # development.
         if addy.lower().startswith("mailer-daemon"):
             f = open('/home/pymaster/bounce.txt', 'a')
             f.write(msg.as_string())
@@ -89,35 +102,59 @@ class MailMessage():
             raise MailError("Message from mailer-daemon")
         if msg.is_multipart():
             raise MailError("Message is multipart")
+        # Test if the inbound message is a remailer-foo type request.  If it
+        # is, respond to it and move on to the next message.
+        if self.remailer_foo(msg):
+            self.remailer_foo_msgs += 1
+            return 0
         try:
-            # email2packet returns True if it successfully extracts a
-            # Mixmaster packet from the supplied email object.
-            ismix = mixmail.email2packet(msg)
+            # email2packet takes an email object and returns a mixmaster
+            # packet object.
+            packet = self.decode.email2packet(msg)
         except DecodePacket.ValidationError, e:
             log.debug("Invalid Mixmaster message: %s", e)
+            self.failed_msgs += 1
             return 0
-        if ismix:
-            mixmail.packet2pool()
-            self.added_to_pool += 1
-        else:
-            # If this isn't a remailer message, it might be a request for
-            # remailer info.
-            self.remailer_foo(msg)
+        try:
+            # The packet is encrypted so we now decrypt it and convert the
+            # content into a email message object fit for sending.
+            self.decode.packet_decrypt(packet)
+        except DecodePacket.ValidationError, e:
+            log.debug("Mixmaster decryption failed: %s", e)
+            self.failed_msgs += 1
+            return 0
+        try:
+            poolmsg = self.decode.unpack(packet)
+        except DecodePacket.ValidationError, e:
+            log.debug("Unpack failed: %s", e)
+            self.failed_msgs += 1
+            return 0
+        except DecodePacket.DestinationError:
+            log.debug("Re-encoding this message for Random Hop.")
+            poolmsg = self.encode.randhop(packet)
+        except DecodePacket.DummyMessage, e:
+            log.debug("%s: Dummy message", f)
+            self.dummy_msgs += 1
+            return 0
+        # If we get here, there should be an email message object that ready
+        # for writing to the pool.
+        f = open(Utils.pool_filename('m'), 'w')
+        f.write(poolmsg.as_string())
+        f.close()
+        self.added_to_pool += 1
 
     def remailer_foo(self, inmsg):
         if not 'Subject' in inmsg:
-            log.debug("Non-remailer message with no Subject.  Ignoring it.")
-            self.failed_msgs += 1
-            return 0
+            # The Subject defines the remailer-foo action.  Without one,
+            # there is no action to take.
+            return False
         if 'Reply-To' in inmsg:
+            # A Reply-To header overrides the address to respond to.
             inmsg['From'] = inmsg['Reply-To']
         elif not 'From' in inmsg:
             # No Reply-To and no From.  We don't know where to send the
             # remailer-foo message so no point in trying.
-            log.debug("Non-remailer message with no reply address.  "
-                      "Ignoring it")
-            self.failed_msgs += 1
-            return 0
+            return False
         addy = inmsg['From']
         sub = inmsg['Subject'].lower().strip()
         if sub == 'remailer-key':
@@ -130,21 +167,19 @@ class MailMessage():
             outmsg = self.send_remailer_adminkey()
         elif sub == 'remailer-stats':
             #TODO Not yet implemented remailer-stats
-            self.remailer_foo_msgs += 1
-            return 0
+            return True
         else:
-            log.warn("%s: No programmed response for this Subject", sub)
+            log.info("%s: No programmed response for this Subject", sub)
             self.msg2file(inmsg)
-            self.failed_msgs += 1
-            return 0
+            return False
         outmsg["From"] = "%s <%s>" % (config.get('general', 'longname'),
                                       config.get('mail', 'address'))
         outmsg["Message-ID"] = Utils.msgid()
         outmsg['Date'] = email.utils.formatdate()
         outmsg['To'] = addy
         self.smtp.sendmail(outmsg["From"], outmsg["To"], outmsg.as_string())
-        self.remailer_foo_msgs += 1
         log.debug("Sent %s to %s", outmsg['Subject'], outmsg['To'])
+        return True
 
     def msg2file(self, inmsg):
         f = open("/home/pymaster/check.txt", "a")
@@ -217,56 +252,34 @@ class MailMessage():
 
 
 class Pool():
-    def __init__(self, pubring, secring, idlog):
-        encode = EncodePacket.Mixmaster(pubring)
-        decode = DecodePacket.Mixmaster(secring, idlog)
+    def __init__(self, encode):
         self.next_process = timing.future(mins=1)
         self.interval = config.get('pool', 'interval')
         self.rate = config.getint('pool', 'rate')
         self.size = config.getint('pool', 'size')
         self.pooldir = config.get('paths', 'pool')
+        # We need the packet encoder in order to generate dummy messages.
+        self.encode = encode
         log.info("Initialised pool. Path=%s, Interval=%s, Rate=%s%%, "
                  "Size=%s.",
                  self.pooldir, self.interval, self.rate, self.size)
         log.debug("First pool process at %s",
                   timing.timestamp(self.next_process))
-        self.encode = encode
-        self.decode = decode
-        self.idlog = idlog
 
     def process(self):
         if timing.now() < self.next_process:
             return 0
         log.debug("Beginning Pool processing.")
-        self.idlog.prune()
         smtp = smtplib.SMTP(config.get('mail', 'server'))
-        for f in self.pick_files():
-            fq = os.path.join(config.get('paths', 'pool'), f)
-            if f.startswith("m"):
-                log.debug("Processing file: %s", f)
-                try:
-                    mixobj = self.decode.get_payload(fq)
-                except DecodePacket.ValidationError, e:
-                    log.warn("%s: Payload Error: %s", f, e)
-                    self.delete(fq)
-                    continue
-                try:
-                    msg = self.decode.process(mixobj)
-                except DecodePacket.ValidationError, e:
-                    log.warn("%s: Validation Error: %s", f, e)
-                    self.delete(fq)
-                    continue
-                except DecodePacket.DestinationError:
-                    log.debug("Re-encoding this message for Random Hop.")
-                    msg = self.encode.randhop(mixobj)
-                except DecodePacket.DummyMessage, e:
-                    log.debug("%s: Dummy message", f)
-                    self.delete(fq)
-                    continue
-            elif f.startswith("o"):
-                fqf = open(fq, 'r')
-                msg = email.message_from_file(fqf)
-                fqf.close()
+        for fn in self.pick_files():
+            if not fn.startswith('m'):
+                # Currently all messages are prefixed with an m.
+                continue
+            fqfn = os.path.join(config.get('paths', 'pool'), fn)
+            f = open(fqfn, 'r')
+            msg = email.message_from_file(f)
+            f.close()
+            log.debug("Pool processing: %s", fn)
             msg["Message-ID"] = Utils.msgid()
             msg["Date"] = email.Utils.formatdate()
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
@@ -276,22 +289,21 @@ class Pool():
                 log.debug("Email sent to: %s", msg["To"])
             except smtplib.SMTPRecipientsRefused, e:
                 log.warn("SMTP failed with: %s", e)
-            self.delete(fq)
+            self.delete(fqfn)
         smtp.quit()
-        # OUtbound dummy message generation.
+        # Outbound dummy message generation.
         if random.randint(0, 100) < config.get('pool', 'outdummy'):
             log.debug("Generating dummy message.")
             self.encode.dummy()
         # Return the time for the next pool processing.
         self.next_process = timing.dhms_future(self.interval)
-        self.idlog.sync()
         log.debug("Next pool process at %s",
                   timing.timestamp(self.next_process))
 
-    def delete(self, fq):
+    def delete(self, fqfn):
         """Delete files from the Mixmaster Pool."""
-        os.remove(fq)
-        log.debug("%s: Deleted", fq)
+        os.remove(fqfn)
+        log.debug("%s: Deleted", fqfn)
 
     def pick_files(self):
         """Pick a random subset of filenames in the Pool and return them as a
@@ -333,9 +345,10 @@ if (__name__ == "__main__"):
 
     pubring = KeyManager.Pubring()
     secring = KeyManager.Secring()
-    mail = MailMessage(pubring)
+    encode = EncodePacket.Mixmaster(pubring)
     idlog = DecodePacket.IDLog()
-    pool = Pool(pubring, secring, idlog)
+    mail = MailMessage(pubring, secring, idlog, encode)
+    pool = Pool(encode)
     sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:
         mail.iterate_mailbox()
