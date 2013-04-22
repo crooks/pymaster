@@ -217,14 +217,10 @@ class Mixmaster(object):
     def __init__(self, pubring):
         self.pubring = pubring
         self.chain = Chain.Chain(pubring)
-        # Easiest way to inject Dummies is to chain them through the local
-        # remailer.  That way they can be stored in the pool like any other
-        # received message.
-        self.dummychain = "%s,*" % config.get('general', 'shortname')
 
     def dummy(self):
         try:
-            chain = self.chain.chain(self.dummychain)
+            node = self.chain.get_node()
         except Chain.ChainError, e:
             log.warn("Dummy sending failed: %s", e)
             return 0
@@ -240,12 +236,11 @@ class Mixmaster(object):
         # email2payload compiles the Mixmaster payload; the second 10240 Bytes
         # of the overall Mixmaster packet.  This is stored in packet.dbody.
         packet.email2payload()
-        # The chain comprises two hops; the first is the local remailer, the
-        # second a randomly selected node.
-        self.final_hop(packet, chain)
-        f = open(Utils.pool_filename('m'), 'wb')
-        f.write(packet.payload)
+        outmsg = self.makemsg(packet, node)
+        f = open(Utils.pool_filename('m'), 'w')
+        f.write(outmsg.as_string())
         f.close()
+
 
     def randhop(self, packet):
         """Randhop is passed the decrypted message packet object that includes
@@ -392,4 +387,4 @@ if (__name__ == "__main__"):
     payload = Payload(msg)
     payload.email2payload()
     outmsg = encode.makemsg(payload)
-    #encode.dummy()
+    encode.dummy()
