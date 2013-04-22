@@ -107,20 +107,15 @@ class Mixmaster():
            [encoded packet]
            -----END REMAILER MESSAGE-----
 
-           The function takes a potential remailer message and validates it.
-           Validation comes in two parts:-
-           1) Is it a Mixmaster formatted message?
-           2) Is it a valid Mixmaster message?
-           Failure of the first test is fine; Remailers process non-Mixmaster
-           messages.  In this instance, False is returned to indicate this
-           isn't a Mixmaster message.  Failure of the second test suggests
-           this tries to look like a Mixmaster message but fails.  In this
-           instance an Error is raised.
+           The input to this function is a Python Email object.  That's split
+           into a list of lines and the base64 payload is extracted.  This is
+           decoded, validated by length and digest and then stored in a
+           MixPacket object.
         """
         mailmsg = msgobj.get_payload().split("\n")
         if ("-----BEGIN REMAILER MESSAGE-----" not in mailmsg or
             "-----END REMAILER MESSAGE-----" not in mailmsg):
-            return False
+            raise ValidationError("No cutmarks on this message")
         begin = mailmsg.index("-----BEGIN REMAILER MESSAGE-----")
         if begin > 10:
             # Bounces frequently contain the Remailer messages.  Checking if
