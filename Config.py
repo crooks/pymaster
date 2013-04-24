@@ -208,6 +208,7 @@ makeopt('etc', 'helpfile', os.path.join(etcpath, 'help.txt'))
 makeopt('etc', 'adminkey', os.path.join(etcpath, 'adminkey.txt'))
 libpath = makepath(basedir, 'lib', 'lib')
 makeopt('general', 'idlog', os.path.join(libpath, 'idlog.db'))
+makeopt('general', 'explog', os.path.join(libpath, 'explog.db'))
 
 if WRITE_DEFAULT_CONFIG:
     with open('config.sample', 'w') as configfile:
