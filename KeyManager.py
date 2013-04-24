@@ -378,13 +378,13 @@ class PubringError(Exception):
 
 class Pubring(KeyUtils):
     def __init__(self):
-        keyfile = config.get('keys', 'pubring')
-        if not os.path.isfile(keyfile):
+        pubring = config.get('keys', 'pubring')
+        if not os.path.isfile(pubring):
             raise PubringError("%s: Pubring not found" % pubring)
-        self.keyfile = keyfile
+        self.pubring = pubring
         self.read_pubring()
         log.info("Initialized Pubring. Path=%s, Keys=%s",
-                 keyfile, len(self.cache))
+                 pubring, len(self.cache))
 
     def __getitem__(self, name):
         # header[0] Shortname
@@ -468,8 +468,8 @@ class Pubring(KeyUtils):
     def recache(self):
         # If the file has been modified since the last read, it's worth
         # reading it again.
-        if os.path.getmtime(self.keyfile) > self.mtime:
-            log.debug("%s modified. Recreating rules.", self.keyfile)
+        if os.path.getmtime(self.pubring) > self.mtime:
+            log.debug("%s modified. Recreating rules.", self.pubring)
             self.read_pubring()
 
     def read_pubring(self):
@@ -487,7 +487,7 @@ class Pubring(KeyUtils):
         # Headers is a list of the remailer header lines found in the Pubring.
         # This is used to list known remailers in remailer-conf replies.
         headers = []
-        f = open(self.keyfile, 'r')
+        f = open(self.pubring, 'r')
         # Bool to indicate when an actual key is being read.  Set True by
         # "Begin Mix Key" cutmarks and False by "End Mix Key" cutmarks.
         inkey = False
@@ -563,7 +563,7 @@ class Pubring(KeyUtils):
         self.snindex = snindex
         self.headers = headers
         # Reset the modified file time
-        self.mtime = os.path.getmtime(self.keyfile)
+        self.mtime = os.path.getmtime(self.pubring)
 
 
 log = logging.getLogger("Pymaster.%s" % __name__)
