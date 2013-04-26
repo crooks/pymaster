@@ -241,14 +241,16 @@ class Mixmaster(object):
         f.write(outmsg.as_string())
         f.close()
 
-
     def randhop(self, packet):
         """Randhop is passed the decrypted message packet object that includes
            a dbody (decrypted body) scalar.  This is the only part needed for
            randhopping.
         """
         exitnode = self.chain.get_exit()
-        return self.makemsg(packet, chainstr=exitnode)
+        msg = self.makemsg(packet, chainstr=exitnode)
+        f = open(Utils.pool_filename('m'), 'w')
+        f.write(msg.as_string())
+        f.close()
 
     def makemsg(self, packet, chainstr=None):
         if chainstr is None:
