@@ -124,24 +124,20 @@ class MailMessage():
             self.failed_msgs += 1
             return 0
         try:
-            poolmsg = self.decode.unpack(packet)
+            self.decode.unpack(packet)
+            self.added_to_pool += 1
         except DecodePacket.ValidationError, e:
             log.debug("Unpack failed: %s", e)
             self.failed_msgs += 1
             return 0
         except DecodePacket.DestinationError:
             log.debug("Re-encoding this message for Random Hop.")
-            poolmsg = self.encode.randhop(packet)
+            self.encode.randhop(packet)
+            self.added_to_pool += 1
         except DecodePacket.DummyMessage, e:
             log.debug("%s: Dummy message", f)
             self.dummy_msgs += 1
             return 0
-        # If we get here, there should be an email message object that ready
-        # for writing to the pool.
-        f = open(Utils.pool_filename('m'), 'w')
-        f.write(poolmsg.as_string())
-        f.close()
-        self.added_to_pool += 1
 
     def remailer_foo(self, inmsg):
         if not 'Subject' in inmsg:
@@ -280,6 +276,10 @@ class Pool():
             msg = email.message_from_file(f)
             f.close()
             log.debug("Pool processing: %s", fn)
+            if not 'To' in msg:
+                log.warn("%s: Malformed pool message. No recipient "
+                         "specified.", fn)
+                continue
             msg["Message-ID"] = Utils.msgid()
             msg["Date"] = email.Utils.formatdate()
             msg["From"] = "%s <%s>" % (config.get('general', 'longname'),
