@@ -25,7 +25,8 @@ import sys
 import os
 import os.path
 import logging
-import shelve  # Required for packetid log
+import shelve  # Required for packetid and chunk logs
+import zlib  # Mixmaster supports gzip payloads
 import email.message
 from Crypto.Cipher import DES3, PKCS1_v1_5
 from Crypto.Hash import MD5
@@ -59,14 +60,15 @@ class MixPacket(object):
         """
         assert len(packet) == 20480
         fmt = '@' + ('512s' * 20)
-        self.set_headers(struct.unpack(fmt, packet[0:10240]))
+        self.set_encheads(struct.unpack(fmt, packet[0:10240]))
         self.set_encbody(packet[10240:20480])
 
-    def set_headers(self, headers):
+    def set_encheads(self, encheads):
         """A list of 20 Mixmaster encrypted headers, each of 512 Bytes.
         """
-        assert len(headers) == 20
-        self.headers = headers
+        assert type(encheads) == tuple
+        assert len(encheads) == 20
+        self.encheads = encheads
 
     def set_encbody(self, encbody):
         """The 10240 Byte Mixmaster encrypted payload.
@@ -85,12 +87,70 @@ class MixPacket(object):
            be plain text.  For intermediates just the outer layer of
            encryption will be stripped.
         """
+        # If a body gets here with a length other than a full Mixmaster
+        # payload, it's either corrupted or about to be corrupted.
         assert len(dbody) == 10240
+        length = struct.unpack('<I', dbody[0:4])[0]
+        self.dbody = dbody[4:length + 4]
+
+    def set_chunk_dbody(self, dbody):
+        """Nearly identical to the set_dbody function.  In this instance
+           the payload is expected to be 10236 bytes as the length has already
+           been processed on each chunk before storing them.
+        """
+        assert len(dbody) <= 10236
+        if len(dbody) != 10236:
+            log.warn("Processing a first chunk message where the payload "
+                     "is less than a complete 10236 Byte packet.  Why is it "
+                     "a chunk message?")
         self.dbody = dbody
+
+    def append_dbody(self, dpart):
+        """This is used during chunk reassembly to concatenate message
+           components.
+        """
+        self.dbody += dpart
+
+    def set_dests(self, dests):
+        """This is the list of up to 20 destination addresses the message may
+           be sent to.  It's only created for exit type messages.
+        """
+        assert type(dests) == list
+        self.dests = dests
+
+    def set_heads(self, heads):
+        """This is the list of up to 20 header fields that may be appended to
+           the message.
+        """
+        assert type(heads) == list
+        self.heads = heads
+
+    def set_payload(self, payload):
+        """The actual message payload.
+        """
+        assert type(payload) == str
+        if payload.startswith("\x1f\x8b"):
+            log.info("Payload begins with GZIP signature")
+            chunksize = 1024
+            d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            length = len(payload)
+            sbyte = 0
+            outstr = ""
+            while sbyte < length:
+                ebyte = sbyte + chunksize
+                if ebyte > length:
+                    ebyte = length
+                bufstr = d.decompress(payload[sbyte:ebyte])
+                outstr += bufstr
+                sbyte = ebyte
+            outstr += d.flush()
+            self.payload = outstr
+        else:
+            self.payload = payload
 
 
 class Mixmaster():
-    def __init__(self, secring, idlog):
+    def __init__(self, secring, idlog, chunkmgr):
         self.destalw = ConfFiles(config.get('etc', 'dest_alw'))
         self.destblk = ConfFiles(config.get('etc', 'dest_blk'))
         self.headalw = ConfFiles(config.get('etc', 'head_alw'))
@@ -99,6 +159,7 @@ class Mixmaster():
         self.middleman = config.getboolean('general', 'middleman')
         self.secring = secring
         self.idlog = idlog
+        self.chunkmgr = chunkmgr
 
     def email2packet(self, msgobj):
         """-----BEGIN REMAILER MESSAGE-----
@@ -136,7 +197,6 @@ class Mixmaster():
         packobj.unpack(packet)
         return packobj
 
-
     def packet_decrypt(self, packet):
         """Unpack a received Mixmaster email message header.  The spec calls
         for 512 Bytes, of which the last 31 are padding.
@@ -152,7 +212,7 @@ class Mixmaster():
         # Unpack the header components.  This includes the 328 Byte
         # encrypted component.
         (keyid, datalen, sesskey, iv, enc,
-         pad) = struct.unpack('@16sB128s8s328s31s', packet.headers[0])
+         pad) = struct.unpack('@16sB128s8s328s31s', packet.encheads[0])
         if not len(sesskey) == datalen:
             raise ValidationError("Incorrect session key size")
         keyid = keyid.encode("hex")
@@ -181,12 +241,11 @@ class Mixmaster():
         # Here we set up the email message object that will eventually be
         # returned.  Regardless of the message type, the output will always
         # be an email message.
-        msg = email.message.Message()
         (packetid,
          deskey,
          packet_type) = struct.unpack("@16s24sB", packet.dhead[0:41])
-        if self.idlog.hit(packetid):
-            raise ValidationError('Known PacketID. Potential Replay-Attack.')
+        #if self.idlog.hit(packetid):
+        #    raise ValidationError('Known PacketID. Potential Replay-Attack.')
         if packet_type == 0:
             """Packet type 0 (intermediate hop):
                19 Initialization vectors      [152 bytes]
@@ -198,7 +257,6 @@ class Mixmaster():
             ivs = struct.unpack(fmt, packet.dhead[41:193])
             addy = packet.dhead[193:273].rstrip("\x00")
             log.debug("Next hop is: %s", addy)
-            msg.add_header("To", addy)
             # The payload string will be extended as each header has a layer of
             # encryption striped off.
             payload = ""
@@ -206,12 +264,12 @@ class Mixmaster():
             # are extracted from the encrypted packet and the corresponding
             # encrypted header has a layer of 3DES removed.
             assert len(ivs) == 19
-            assert len(packet.headers) == 20
+            assert len(packet.encheads) == 20
             for h in range(19):
                 # Decrypt each 512 Byte packet header using the 3DES key and a
                 # sequence of IVs held in the packet information.
                 desobj = DES3.new(deskey, DES3.MODE_CBC, IV=ivs[h])
-                payload += desobj.decrypt(packet.headers[h + 1])
+                payload += desobj.decrypt(packet.encheads[h + 1])
             # At this point, the payload contains 19 headers so the length
             # should be 19 * 512 Bytes.
             assert len(payload) == 9728
@@ -222,7 +280,14 @@ class Mixmaster():
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=ivs[18])
             payload += desobj.decrypt(packet.encbody)
             assert len(payload) == 20480
+            # This email object will be populated with the message for the
+            # next hop remailer.
+            msg = email.message.Message()
             msg.set_payload(self.mixprep(payload))
+            msg['To'] = addy
+            f = open(Utils.pool_filename('m'), 'w')
+            f.write(msg.as_string())
+            f.close()
         elif packet_type == 1:
             """Packet type 1 (final hop):
                Message ID                     [ 16 bytes]
@@ -231,52 +296,22 @@ class Mixmaster():
             log.debug("This is an Exit type message")
             self.validate(packet, 65)
             message_id, iv = struct.unpack("@16s8s", packet.dhead[41:65])
-            """Length                         [       4 bytes]
-               Number of destination fields   [        1 byte]
-               Destination fields             [ 80 bytes each]
-               Number of header line fields   [        1 byte]
-               Header lines fields            [ 80 bytes each]
-               User data section              [ up to ~2.5 MB]
-            """
             desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
             packet.set_dbody(desobj.decrypt(packet.encbody))
-            sbyte = 0
-            ebyte = 5
-            length, dfields = struct.unpack('<IB', packet.dbody[sbyte:ebyte])
-            if dfields > 20:
-                raise ValidationError("Too many Destination fields")
-            if dfields < 1:
-                raise ValidationError("No destination fields")
-            dest_struct = "80s" * dfields
-            sbyte = ebyte
-            ebyte = sbyte + (80 * dfields)
-            destlist = list(struct.unpack(dest_struct,
-                            packet.dbody[sbyte:ebyte]))
-            if len(destlist) >= 1 and destlist[0].startswith("null:"):
-                raise DummyMessage("Dummy message")
-            dests = self.dest_allow(destlist)
-            if len(dests) == 0:
-                raise ValidationError("No acceptable destinations for this "
-                                      "message")
-            desthead = ','.join(dests)
-            msg["To"] = desthead
-            # At this point we have established a list of acceptable
-            # email destinations.
-            sbyte = ebyte
-            ebyte = sbyte + 1
-            hfields = struct.unpack('B', packet.dbody[sbyte])[0]
-            head_struct = "80s" * hfields
-            sbyte = ebyte
-            ebyte = sbyte + 80 * hfields
-            headlist = list(struct.unpack(head_struct,
-                                          packet.dbody[sbyte:ebyte]))
-            #TODO Header checking needs to be sorted out.
-            #self.heads_allow(headlist)
-            sbyte = ebyte
-            # The length of the message is prepended by the 4 Byte length,
-            # hence why we need to add 4 to ebyte.
-            ebyte = length + 4
-            msg.set_payload(packet.dbody[sbyte:ebyte])
+            self.unpack_body(packet)
+            # This email object will be populated with the message for the
+            # final destination.
+            msg = email.message.Message()
+            msg.set_payload(packet.payload)
+            # This may require a little refinement but for now it seems to
+            # fit the requirements.
+            msg['To'] = ','.join(packet.dests)
+            for h in packet.heads:
+                head, content = h.split(':', 1)
+                msg[head.strip()] = content.strip()
+            f = open(Utils.pool_filename('m'), 'w')
+            f.write(msg.as_string())
+            f.close()
         elif packet_type == 2:
             """Packet type 2 (final hop, partial message):
                Chunk number                   [  1 byte ]
@@ -286,27 +321,74 @@ class Mixmaster():
             """
             log.debug("This is a chunk-type message")
             self.validate(packet, 67)
-        assert 'To' in msg
-        return msg
+            (chunknum, numchunks, message_id,
+             iv) = struct.unpack('@BB16s8s', packet.dhead[41:67])
+            desobj = DES3.new(deskey, DES3.MODE_CBC, IV=iv)
+            packet.set_dbody(desobj.decrypt(packet.encbody))
+            ready_to_send = self.chunkmgr.bucket(message_id, numchunks,
+                                                 chunknum, packet)
+            if ready_to_send:
+                # It's message reconstruction time!  First we need to retrieve
+                # the first chunk; it contains the headers.
+                self.chunkmgr.assemble(message_id, packet)
+                self.unpack_body(packet)
+                # The message object is now constructed from the first chunk.
+                msg = email.message.Message()
+                msg.set_payload(packet.payload)
+                # This may require a little refinement but for now it seems to
+                # fit the requirements.
+                msg['To'] = ','.join(packet.dests)
+                for h in packet.heads:
+                    head, content = h.split(':', 1)
+                    msg[head.strip()] = content.strip()
+                # The message is now written to the file in the usual manner,
+                # except that before closing it, we append all the other
+                # message chunks to it in sequence.  This approach saves
+                # reading the potentially ~2.5MB payload into memory.
+                f = open(Utils.pool_filename('m'), 'w')
+                f.write(msg.as_string())
+                f.close()
+                self.chunkmgr.delete(message_id)
 
-    def chunk_message(self, packet):
-        """Packet type 2 (final hop, partial message):
-           Chunk number                   [  1 byte ]
-           Number of chunks               [  1 byte ]
-           Message ID                     [ 16 bytes]
-           Initialization vector          [  8 bytes]
+    def unpack_body(self, packet):
+        """Length                         [       4 bytes]
+           Number of destination fields   [        1 byte]
+           Destination fields             [ 80 bytes each]
+           Number of header line fields   [        1 byte]
+           Header lines fields            [ 80 bytes each]
+           User data section              [ up to ~2.5 MB]
         """
-        (chunk, chunks, message_id, iv, timestamp,
-         msgdigest) = struct.unpack('@BB16s8s7s16s',
-                                    packet['decrypted'][41:90])
-        packet_info = []
-        packet_info.append(chunk)
-        packet_info.append(chunks)
-        packet_info.append(message_id)
-        packet_info.append(iv)
-        checksum = MD5.new(data=packet['decrypted'][0:74]).digest()
-        if checksum != msgdigest:
-            raise ValidationError("Encrypted header failed checksum")
+        sbyte = 0
+        ebyte = 1
+        dfields = struct.unpack('B', packet.dbody[sbyte:ebyte])[0]
+        if dfields > 20:
+            raise ValidationError("Too many Destination fields")
+        dest_struct = "80s" * dfields
+        sbyte = ebyte
+        ebyte = sbyte + (80 * dfields)
+        packet.set_dests(self.unpad(list(struct.unpack(dest_struct,
+                                         packet.dbody[sbyte:ebyte]))))
+        if packet.dests[0].startswith("null:"):
+            raise DummyMessage("Dummy message")
+        # At this point we have established a list of acceptable
+        # email destinations.  Now for the header fields.
+        sbyte = ebyte
+        ebyte = sbyte + 1
+        hfields = struct.unpack('B', packet.dbody[sbyte])[0]
+        if hfields > 20:
+            raise ValidationError("Too many Header fields")
+        if hfields >= 1:
+            head_struct = "80s" * hfields
+            sbyte = ebyte
+            ebyte = sbyte + 80 * hfields
+            packet.set_heads(self.unpad(list(struct.unpack(head_struct,
+                                             packet.dbody[sbyte:ebyte]))))
+        else:
+            packet.set_heads([])
+        # We now have unpacked destinations and headers.  Now comes the
+        # payload.
+        sbyte = ebyte
+        packet.set_payload(packet.dbody[sbyte:])
 
     def validate(self, packet, sbyte):
         """Encrypted headers are of varying length depending on type (Exit,
@@ -315,6 +397,9 @@ class Mixmaster():
         """
         ebyte = sbyte + 5
         timehead = struct.unpack("5s", packet.dhead[sbyte:ebyte])[0]
+        #TODO Remove this assertion after testing.  Correct formating of
+        # inbound messages cannot be guaranteed.
+        assert timehead == "0000\x00"
         if timehead != "0000\x00":
             raise ValidationError("Timestamp not where expected")
         sbyte = ebyte
@@ -508,6 +593,139 @@ class IDLog():
     def close(self):
         self.idlog.close()
         log.info("Synced and closed the Packet ID log.")
+
+
+class ChunkManager(object):
+    """Mixmaster contructs outbound packets of equal size (20480 Bytes),
+       regardless of the message size.  When the message content exceeds the
+       capacity of a single packet, it's broken into chunks.  This class
+       logs the packet chunks so the entire message can be reconstructed.
+    """
+    def __init__(self):
+        logfile = config.get('general', 'explog')
+        pktlog = shelve.open(logfile, flag='c', writeback=True)
+        nextday = timing.future(days=1)
+        pktexp = config.getint('general', 'packetexp')
+        self.pktlog = pktlog
+        self.nextday = nextday
+        self.pktexp = pktexp
+        log.info("Packet Chunk log initialized. Entries=%s, ExpireDays=%s",
+                 len(pktlog), pktexp)
+
+    def bucket(self, messageid, numchunks, chunknum, packet):
+        mid = messageid.encode('hex')
+        assert numchunks <= 255
+        if numchunks < 2:
+            log.warn("We have a chunk type message but with less the 2 "
+                     "chunks.  That shouldn't happen during encoding but "
+                     "it may be salvagable so processing will continue.")
+        if chunknum > numchunks:
+            log.warn("Chunk number exceeds stated number of chunks.  It's "
+                     "unlikely there is a correct action to take in this "
+                     "scenario but ignoring the chunk is probably best.")
+            return False
+        filename = Utils.pool_filename('p')
+        # Use strings for dict keys as Integers may be unsupported.
+        chunkstr = str(chunknum)
+        if messageid in self.pktlog:
+            if chunkstr in self.pktlog[messageid]:
+                log.warn("Duplicate chunk number")
+            if numchunks != self.pktlog[messageid]['numchunks']:
+                log.warn("Message chunk reports a different total number of "
+                         "chunks.")
+            self.pktlog[messageid][chunkstr] = filename
+        else:
+            msgid_items = {chunkstr: filename,
+                           'numchunks': numchunks,
+                           'age': 0}
+            self.pktlog[messageid] = msgid_items
+        f = open(filename, 'wb')
+        f.write(packet.dbody)
+        f.close()
+        # That's it for recording the packet chunk.  The rest of the function
+        # is concerned with checking if all the chunks are available.  If they
+        # are, True is returned.
+        if len(self.pktlog[messageid]) == numchunks + 2:
+            for k in self.pktlog[messageid]:
+                # The items in the dict comprise 2 fixed items (numchunks,
+                # age).  We therfore assume that when the item count is 2
+                # greater than the numchunks, we have the entire message.
+                for n in range(1, numchunks + 1):
+                    nstr = str(n)
+                    if not nstr in self.pktlog[messageid]:
+                        log.error("A sufficient number of chunks are "
+                                  "available but an expected chunk is "
+                                  "missing.  This situation should not "
+                                  "arise!  The missing chunk is: %s", nstr)
+                        return False
+            # We have a sufficient number of chunks and they are the chunk
+            # numbers we expected.  Return True; we're ready to send!
+            return True
+        return False
+
+    def assemble(self, messageid, packet):
+        iditems = self.pktlog[messageid]
+        numchunks = iditems['numchunks']
+        log.debug("Reassembling chunked message using %s chunks.", numchunks)
+        for i in range(1, numchunks + 1):
+            infile = iditems[str(i)]
+            content = open(infile, 'r')
+            if i == 1:
+                packet.set_chunk_dbody(content.read())
+            else:
+                packet.append_dbody(content.read())
+            content.close()
+        length = len(packet.dbody)
+        log.debug("Reassembled a %s Byte message", length)
+
+    def prune(self):
+        if timing.now() > self.nextday():
+            for messageid in self.pktlog.keys():
+                if messageid['age'] > self.pktexp:
+                    log.info("Deleting chunks due to packet expiration. "
+                             "A message will be lost but we can't wait "
+                             "forever.")
+                    self.delete(messageid)
+                else:
+                    self.pktlog[messageid]['age'] += 1
+            self.nextday = timing.future(days=1)
+
+    def delete(self, messageid):
+        """When a partial chunk expires, it's a safe assumption that other
+           pending chunks of the same message are now useless.  This function
+           attempts to delete all chunks that exist for a message.  This
+           function also serves to delete partial chunks after complete
+           message reassembly.
+        """
+        deleted_chunks = 0
+        numchunks = self.pktlog[messageid]['numchunks']
+        log.debug("Attempting to delete %s chunk files.", numchunks)
+        for n in range(1, numchunks + 1):
+            nstr = str(n)
+            if nstr in self.pktlog[messageid]:
+                filename = self.pktlog[messageid][nstr]
+                if os.path.isfile(filename):
+                    os.remove(filename)
+                    deleted_chunks += 1
+                else:
+                    log.error("%s: Pool filename does not exist during chunk "
+                              "deletion.  What happened to it?", filename)
+            else:
+                log.error("Expected to find chunk %s during chunk deletion "
+                          "but there is no key for it in the chunk log.  A"
+                          "lost packet chunk may sit in the pool forever.",
+                          nstr)
+        log.debug("Chunk deletion completed.  Removed %s chunks.",
+                  deleted_chunks)
+        del self.pktlog[messageid]
+
+    def sync(self):
+        self.pktlog.sync()
+
+    def close(self):
+        self.pktlog.close()
+        log.info("Synced and closed the Chunk log.")
+
 
 log = logging.getLogger("Pymaster.%s" % __name__)
 if (__name__ == "__main__"):

@@ -48,14 +48,15 @@ class PayloadError(Exception):
 
 
 class MailMessage():
-    def __init__(self, pubring, secring, idlog, encode):
+    def __init__(self, pubring, secring, idlog, encode, chunkmgr):
         maildir = config.get('paths', 'maildir')
         self.inbox = mailbox.Maildir(maildir, factory=None, create=False)
-        decode = DecodePacket.Mixmaster(secring, idlog)
+        decode = DecodePacket.Mixmaster(secring, idlog, chunkmgr)
         self.decode = decode
         self.server = config.get('mail', 'server')
         self.pubring = pubring
         self.idlog = idlog
+        self.chunkmgr = chunkmgr
         self.encode = encode
         log.info("Initialized Mail handler. Mailbox=%s, Server=%s",
                   maildir, self.server)
@@ -85,6 +86,7 @@ class MailMessage():
         self.inbox.close()
         self.smtp.quit()
         self.idlog.sync()
+        self.chunkmgr.sync()
 
     def mail2pool(self, msgkey):
         # The following lines read an email file and store it as a Python
@@ -347,7 +349,8 @@ if (__name__ == "__main__"):
     secring = KeyManager.Secring()
     encode = EncodePacket.Mixmaster(pubring)
     idlog = DecodePacket.IDLog()
-    mail = MailMessage(pubring, secring, idlog, encode)
+    chunkmgr = DecodePacket.ChunkManager()
+    mail = MailMessage(pubring, secring, idlog, encode, chunkmgr)
     pool = Pool(encode)
     sleep = timing.dhms_secs(config.get('general', 'interval'))
     while True:
@@ -358,4 +361,5 @@ if (__name__ == "__main__"):
             timing.sleep(sleep)
         except KeyboardInterrupt:
             idlog.close()
+            chunkmgr.close()
             sys.exit(0)
