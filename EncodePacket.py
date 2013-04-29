@@ -247,6 +247,12 @@ class Mixmaster(object):
            randhopping.
         """
         exitnode = self.chain.get_exit()
+        # Reappend the length to the decrypted body. Setting dbody during
+        # decoding removed this info.  It also stripped the random padding
+        # so that gets reversed here too.
+        packet.dbody = packet.length + packet.dbody
+        length = len(packet.dbody)
+        packet.dbody += Crypto.Random.get_random_bytes(10240 - length)
         msg = self.makemsg(packet, chainstr=exitnode)
         f = open(Utils.pool_filename('m'), 'w')
         f.write(msg.as_string())

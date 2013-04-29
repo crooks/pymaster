@@ -54,6 +54,10 @@ class DestinationError(Exception):
 
 
 class MixPacket(object):
+    def __init__(self, destalw, destblk):
+        self.destalw = destalw
+        self.destblk = destblk
+
     def unpack(self, packet):
         """Take an encrypted Mixmaster packet and split it into its component
            parts: The 20 headers and the payload.
@@ -91,6 +95,9 @@ class MixPacket(object):
         # payload, it's either corrupted or about to be corrupted.
         assert len(dbody) == 10240
         length = struct.unpack('<I', dbody[0:4])[0]
+        # We retain the length so it can be prepended to dbody again, should
+        # the message require randhopping.
+        self.length = dbody[0:4]
         self.dbody = dbody[4:length + 4]
 
     def set_chunk_dbody(self, dbody):
@@ -116,7 +123,7 @@ class MixPacket(object):
            be sent to.  It's only created for exit type messages.
         """
         assert type(dests) == list
-        self.dests = dests
+        self.dests = self._dest_allow(dests)
 
     def set_heads(self, heads):
         """This is the list of up to 20 header fields that may be appended to
@@ -148,6 +155,44 @@ class MixPacket(object):
         else:
             self.payload = payload
 
+    def _dest_allow(self, dests):
+        """Read the list of destinations defined in the message.  Strip out
+        any that are explicitly blocked and return a new list of allowed
+        destinations.  If any one is not explicitly allowed and we're running
+        as a Middleman, raise a DestinationError and randhop it.
+        """
+        alw_dests = []
+        randhop = False
+        for d in dests:
+            alw = self.destalw.hit(d)
+            blk = self.destblk.hit(d)
+            if alw and not blk:
+                alw_dests.append(d)
+            elif blk and not alw:
+                log.info("%s: Destination explicitly blocked.", d)
+            elif blk and alw:
+                # Both allow and block hits mean a decision has to be made on
+                # which has priority.  If block_first is True then allow is the
+                # second (most significant) check.  If it's False, block is
+                # more significant and the destinaion is not allowed.
+                if config.getboolean('general', 'block_first'):
+                    alw_dests.append(d)
+                else:
+                    log.info("%s: Dest matches allow and block rules but "
+                             "configuration dictates that block takes "
+                             "priority", d)
+            # Any blocked destination shouldn't reach this point.
+            elif config.getboolean('general', 'middleman') and not alw:
+                # The dest is not explicitly allowed or denied.  As this is
+                # a Middleman.
+                log.info("%s: Middleman doesn't allow this destination.", d)
+                raise DestinationError("Must randhop")
+            else:
+                # No explict allow rule but we're not a Middleman so accept
+                # the stated destination.
+                alw_dests.append(d)
+        return alw_dests
+
 
 class Mixmaster():
     def __init__(self, secring, idlog, chunkmgr):
@@ -156,7 +201,6 @@ class Mixmaster():
         self.headalw = ConfFiles(config.get('etc', 'head_alw'))
         self.headblk = ConfFiles(config.get('etc', 'head_blk'))
         self.remailer_type = "mixmaster-%s" % config.get('general', 'version')
-        self.middleman = config.getboolean('general', 'middleman')
         self.secring = secring
         self.idlog = idlog
         self.chunkmgr = chunkmgr
@@ -193,7 +237,7 @@ class Mixmaster():
         if digest != MD5.new(data=packet).digest():
             raise ValidationError("Mixmaster message digest failed")
         # This is the only place a Mixmaster Packet object is created.
-        packobj = MixPacket()
+        packobj = MixPacket(self.destalw, self.destblk)
         packobj.unpack(packet)
         return packobj
 
@@ -444,44 +488,6 @@ class Mixmaster():
         payload += "-----END REMAILER MESSAGE-----\n"
         return payload
 
-    def dest_allow(self, dests):
-        """Read the list of destinations defined in the message.  Strip out
-        any that are explicitly blocked and return a new list of allowed
-        destinations.  If any one is not explicitly allowed and we're running
-        as a Middleman, raise a DestinationError and randhop it.
-        """
-        alw_dests = []
-        randhop = False
-        for d in self.unpad(dests):
-            alw = self.destalw.hit(d)
-            blk = self.destblk.hit(d)
-            if alw and not blk:
-                alw_dests.append(d)
-            elif blk and not alw:
-                log.info("%s: Destination explicitly blocked.", d)
-            elif blk and alw:
-                # Both allow and block hits mean a decision has to be made on
-                # which has priority.  If block_first is True then allow is the
-                # second (most significant) check.  If it's False, block is
-                # more significant and the destinaion is not allowed.
-                if config.getboolean('general', 'block_first'):
-                    alw_dests.append(d)
-                else:
-                    log.info("%s: Dest matches allow and block rules but "
-                             "configuration dictates that block takes "
-                             "priority", d)
-            # Any blocked destination shouldn't reach this point.
-            elif self.middleman and not alw:
-                # The dest is not explicitly allowed or denied.  As this is
-                # a Middleman.
-                log.info("%s: Middleman doesn't allow this destination.", d)
-                raise DestinationError("Must randhop")
-            else:
-                # No explict allow rule but we're not a Middleman so accept
-                # the stated destination.
-                alw_dests.append(d)
-        return alw_dests
-
     def heads_allow(self, heads):
         """Read the list of destinations defined in the message.  Strip out
         any that are explicitly blocked and return a new list of allowed
@@ -530,13 +536,10 @@ class ConfFiles():
              self.list_rules) = Utils.file2regex(self.filename)
             self.mtime = file_modified
         if testdata in self.list_rules:
-            log.debug("Message matches: %s", testdata)
             return True
         if self.regex_rules:
             regex_test = self.regex_rules.search(testdata)
             if regex_test:
-                log.debug("Message matches Regular Expression: %s",
-                         regex_test.group(0))
                 return True
         return False
 
