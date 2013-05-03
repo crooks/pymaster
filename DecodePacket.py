@@ -54,9 +54,11 @@ class DestinationError(Exception):
 
 
 class MixPacket(object):
-    def __init__(self, destalw, destblk):
+    def __init__(self, destalw, destblk, headalw, headblk):
         self.destalw = destalw
         self.destblk = destblk
+        self.headalw = headalw
+        self.headblk = headblk
 
     def unpack(self, packet):
         """Take an encrypted Mixmaster packet and split it into its component
@@ -130,7 +132,7 @@ class MixPacket(object):
            the message.
         """
         assert type(heads) == list
-        self.heads = heads
+        self.heads = self._head_allow(heads)
 
     def set_payload(self, payload):
         """The actual message payload.
@@ -193,6 +195,35 @@ class MixPacket(object):
                 alw_dests.append(d)
         return alw_dests
 
+    def _head_allow(self, heads):
+        """Read the list of destinations defined in the message.  Strip out
+        any that are explicitly blocked and return a new list of allowed
+        destinations.  If any one is not explicitly allowed and we're running
+        as a Middleman, raise a DestinationError and randhop it.
+        """
+        alw_heads = []
+        for h in heads:
+            alw = self.headalw.hit(h)
+            blk = self.headblk.hit(h)
+            if alw and not blk:
+                alw_heads.append(h)
+            elif blk and not alw:
+                log.debug("%s: Header explicitly blocked.", h)
+            elif blk and alw:
+                # Both allow and block hits mean a decision has to be made on
+                # which has priority.  If block_first is True then allow is the
+                # second (most significant) check.  If it's False, block is
+                # more significant and the destinaion is not allowed.
+                if config.getboolean('general', 'block_first'):
+                    alw_heads.append(h)
+                else:
+                    log.info("%s: Header matches allow and block rules but "
+                             "configuration dictates that block takes "
+                             "priority", h)
+            else:
+                alw_heads.append(h)
+        return alw_heads
+
 
 class Mixmaster():
     def __init__(self, secring, idlog, chunkmgr):
@@ -237,7 +268,10 @@ class Mixmaster():
         if digest != MD5.new(data=packet).digest():
             raise ValidationError("Mixmaster message digest failed")
         # This is the only place a Mixmaster Packet object is created.
-        packobj = MixPacket(self.destalw, self.destblk)
+        packobj = MixPacket(self.destalw,
+                            self.destblk,
+                            self.headalw,
+                            self.headblk)
         packobj.unpack(packet)
         return packobj
 
@@ -487,34 +521,6 @@ class Mixmaster():
         payload = header + payload
         payload += "-----END REMAILER MESSAGE-----\n"
         return payload
-
-    def heads_allow(self, heads):
-        """Read the list of destinations defined in the message.  Strip out
-        any that are explicitly blocked and return a new list of allowed
-        destinations.  If any one is not explicitly allowed and we're running
-        as a Middleman, raise a DestinationError and randhop it.
-        """
-        for h in self.unpad(heads):
-            alw = self.headalw.hit(h)
-            blk = self.headblk.hit(h)
-            head, content = h.split(": ", 1)
-            if alw and not blk:
-                self.msg[head.strip()] = content.strip()
-            elif blk and not alw:
-                log.debug("%s: Header explicitly blocked.", head)
-            elif blk and alw:
-                # Both allow and block hits mean a decision has to be made on
-                # which has priority.  If block_first is True then allow is the
-                # second (most significant) check.  If it's False, block is
-                # more significant and the destinaion is not allowed.
-                if config.getboolean('general', 'block_first'):
-                    self.msg[head] = content
-                else:
-                    log.info("%s: Header matches allow and block rules but "
-                             "configuration dictates that block takes "
-                             "priority", head)
-            else:
-                self.msg[head.strip()] = content.strip()
 
 
 class ConfFiles():
