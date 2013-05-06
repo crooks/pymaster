@@ -79,8 +79,8 @@ class MailMessage():
                 log.info("Mail Error: %s", e)
                 self.failed_msgs += 1
             self.inbox.remove(k)
-        log.info("Mail processing complete. Processed=%s, Pooled=%s, "
-                 "Text=%s, dummies=%s, Failed=%s",
+        log.debug("Mail processing complete. Processed=%s, Pooled=%s, "
+                  "Text=%s, dummies=%s, Failed=%s",
                   len(messages), self.added_to_pool, self.remailer_foo_msgs,
                   self.dummy_msgs, self.failed_msgs)
         self.inbox.close()
@@ -101,7 +101,7 @@ class MailMessage():
             f = open('/home/pymaster/bounce.txt', 'a')
             f.write(msg.as_string())
             f.close()
-            raise MailError("Message from mailer-daemon")
+            raise MailError("Message from mailer-daemon. Probably a bounce.")
         if msg.is_multipart():
             raise MailError("Message is multipart")
         # Test if the inbound message is a remailer-foo type request.  If it
@@ -137,7 +137,7 @@ class MailMessage():
             self.encode.randhop(packet)
             self.added_to_pool += 1
         except DecodePacket.DummyMessage, e:
-            log.debug("%s: Dummy message", f)
+            log.debug("%s: Dummy message", msgkey)
             self.dummy_msgs += 1
             return 0
 

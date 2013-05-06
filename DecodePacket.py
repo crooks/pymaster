@@ -125,6 +125,8 @@ class MixPacket(object):
            be sent to.  It's only created for exit type messages.
         """
         assert type(dests) == list
+        if len(dests) >= 1 and dests[0].startswith("null:"):
+            raise DummyMessage("Dummy message")
         self.dests = self._dest_allow(dests)
 
     def set_heads(self, heads):
@@ -441,13 +443,14 @@ class Mixmaster():
         dfields = struct.unpack('B', packet.dbody[sbyte:ebyte])[0]
         if dfields > 20:
             raise ValidationError("Too many Destination fields")
+        if dfields < 1:
+            log.warn("No destinations on message")
+            raise ValidationError("No destinations defined")
         dest_struct = "80s" * dfields
         sbyte = ebyte
         ebyte = sbyte + (80 * dfields)
         packet.set_dests(self.unpad(list(struct.unpack(dest_struct,
                                          packet.dbody[sbyte:ebyte]))))
-        if packet.dests[0].startswith("null:"):
-            raise DummyMessage("Dummy message")
         # At this point we have established a list of acceptable
         # email destinations.  Now for the header fields.
         sbyte = ebyte
@@ -531,6 +534,7 @@ class ConfFiles():
         mtime = 0
         self.mtime = mtime
         self.filename = filename
+        log.info("%s: Initialized" % filename)
 
     def hit(self, testdata):
         if not os.path.isfile(self.filename):
