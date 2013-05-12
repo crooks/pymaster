@@ -189,6 +189,9 @@ makeopt('keys', 'pubkey', os.path.join(keypath, 'key.txt'))
 makeopt('keys', 'mlist2', os.path.join(keypath, 'mlist2.txt'))
 config.set('keys', 'validity_days', 372)
 config.set('keys', 'grace_days', 28)
+# Run Directory
+pidpath = makepath(basedir, 'run', 'run')
+makeopt('general', 'pidfile', os.path.join(pidpath, 'pymaster.pid'))
 # Logging Directory
 logpath = makepath(basedir, 'log', 'log')
 # Mixmaster Pool

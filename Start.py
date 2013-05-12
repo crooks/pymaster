@@ -23,6 +23,7 @@
 import sys
 import os.path
 import logging
+from Daemon import Daemon
 from Config import config
 import timing
 import Mail
@@ -32,7 +33,41 @@ import EncodePacket
 import KeyManager
 
 
-log = logging.getLogger("Pymaster")
+class MyDaemon(Daemon):
+    def run(self):
+        pubring = KeyManager.Pubring()
+        secring = KeyManager.Secring()
+        encode = EncodePacket.Mixmaster(pubring)
+        idlog = DecodePacket.IDLog()
+        chunkmgr = DecodePacket.ChunkManager()
+        mail = Mail.MailMessage(pubring, secring, idlog, encode, chunkmgr)
+        pool = Pool.Pool(encode)
+        sleep = timing.dhms_secs(config.get('general', 'interval'))
+        self.idlog = idlog
+        self.chunkmgr = chunkmgr
+        while True:
+            idlog.prune()
+            chunkmgr.prune()
+            mail.iterate_mailbox()
+            pool.process()
+            idlog.sync()
+            chunkmgr.sync()
+            log.debug("Sleeping for %s seconds", sleep)
+            try:
+                timing.sleep(sleep)
+            except KeyboardInterrupt:
+                self.mystop()
+
+    def mystop(self):
+        self.idlog.close()
+        self.chunkmgr.close()
+        self.stop()
+
+    def myrestart(self):
+        self.idlog.close()
+        self.chunkmgr.close()
+        self.restart()
+
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
     datefmt = config.get('logging', 'datefmt')
@@ -40,29 +75,20 @@ if (__name__ == "__main__"):
                  'warn': logging.WARN, 'error': logging.ERROR}
     log = logging.getLogger("Pymaster")
     log.setLevel(loglevels[config.get('logging', 'level')])
-    handler = logging.StreamHandler()
+    filename = os.path.join(config.get('paths', 'log'), 'pymaster.log')
+    handler = logging.FileHandler(filename, mode='w')
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
-    pubring = KeyManager.Pubring()
-    secring = KeyManager.Secring()
-    encode = EncodePacket.Mixmaster(pubring)
-    idlog = DecodePacket.IDLog()
-    chunkmgr = DecodePacket.ChunkManager()
-    mail = Mail.MailMessage(pubring, secring, idlog, encode, chunkmgr)
-    pool = Pool.Pool(encode)
-    sleep = timing.dhms_secs(config.get('general', 'interval'))
-    while True:
-        idlog.prune()
-        chunkmgr.prune()
-        mail.iterate_mailbox()
-        pool.process()
-        idlog.sync()
-        chunkmgr.sync()
-        log.debug("Sleeping for %s seconds", sleep)
-        try:
-            timing.sleep(sleep)
-        except KeyboardInterrupt:
-            idlog.close()
-            chunkmgr.close()
-            sys.exit(0)
+    d = MyDaemon(config.get('general', 'pidfile'),
+                 stderr=os.path.join(config.get('paths', 'log'), 'error.log'))
+    if len(sys.argv) <= 1:
+        sys.stdout.write("Usage: --start, --stop, --restart\n")
+        sys.exit(0)
+    command = sys.argv[1]
+    if command == "--start":
+        d.start()
+    elif command == "--stop":
+        d.mystop()
+    elif command == "--restart":
+        d.myrestart()
