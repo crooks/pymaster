@@ -324,8 +324,8 @@ class Mixmaster():
         (packetid,
          deskey,
          packet_type) = struct.unpack("@16s24sB", packet.dhead[0:41])
-        #if self.idlog.hit(packetid):
-        #    raise ValidationError('Known PacketID. Potential Replay-Attack.')
+        if self.idlog.hit(packetid):
+            raise ValidationError('Known PacketID. Potential Replay-Attack.')
         if packet_type == 0:
             """Packet type 0 (intermediate hop):
                19 Initialization vectors      [152 bytes]
@@ -577,7 +577,7 @@ class IDLog():
            count exceeeds the expiry period then delete the id from the log.
         """
         if timing.now() > self.nextday:
-            log.debug("Starting PacketID Log pruning.")
+            log.info("Performing daily prune of packetid log.")
             before = len(self.idlog)
             deleted = 0
             for k in self.idlog.keys():
@@ -692,9 +692,10 @@ class ChunkManager(object):
         log.debug("Reassembled a %s Byte message", length)
 
     def prune(self):
-        if timing.now() > self.nextday():
+        if timing.now() > self.nextday:
+            log.info("Performing daily prune of partial chunk log.")
             for messageid in self.pktlog.keys():
-                if messageid['age'] > self.pktexp:
+                if self.pktlog[messageid]['age'] > self.pktexp:
                     log.info("Deleting chunks due to packet expiration. "
                              "A message will be lost but we can't wait "
                              "forever.")
