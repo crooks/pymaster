@@ -28,7 +28,7 @@ from Config import config
 import timing
 import Mail
 import Pool
-import DecodePacket
+import IDLog
 import EncodePacket
 import KeyManager
 
@@ -38,8 +38,8 @@ class MyDaemon(Daemon):
         pubring = KeyManager.Pubring()
         secring = KeyManager.Secring()
         encode = EncodePacket.Mixmaster(pubring)
-        idlog = DecodePacket.IDLog()
-        chunkmgr = DecodePacket.ChunkManager()
+        idlog = IDLog.PacketID()
+        chunkmgr = IDLog.ChunkID()
         mail = Mail.MailMessage(pubring, secring, idlog, encode, chunkmgr)
         pool = Pool.Pool(encode)
         sleep = timing.dhms_secs(config.get('general', 'interval'))
@@ -59,8 +59,7 @@ class MyDaemon(Daemon):
                 self.mystop()
 
     def mystop(self):
-        self.idlog.close()
-        self.chunkmgr.close()
+        log.info("Stopping PyMaster process.")
         self.stop()
 
     def myrestart(self):
