@@ -23,6 +23,7 @@
 import sys
 import os.path
 import logging
+import signal
 from Daemon import Daemon
 from Config import config
 import timing
@@ -45,6 +46,7 @@ class MyDaemon(Daemon):
         sleep = timing.dhms_secs(config.get('general', 'interval'))
         self.idlog = idlog
         self.chunkmgr = chunkmgr
+        signal.signal(signal.SIGTERM, self.signal_handler)
         while True:
             idlog.prune()
             chunkmgr.prune()
@@ -58,14 +60,14 @@ class MyDaemon(Daemon):
             except KeyboardInterrupt:
                 self.mystop()
 
-    def mystop(self):
-        log.info("Stopping PyMaster process.")
-        self.stop()
-
-    def myrestart(self):
+    def signal_handler(self, signum, frame):
+        log.info("Caught SIGTERM, exiting cleanly.")
+        signal.signal(signum, signal.SIG_DFL)
         self.idlog.close()
         self.chunkmgr.close()
-        self.restart()
+        self.stop()
+
+
 
 if (__name__ == "__main__"):
     logfmt = config.get('logging', 'format')
@@ -75,7 +77,7 @@ if (__name__ == "__main__"):
     log = logging.getLogger("Pymaster")
     log.setLevel(loglevels[config.get('logging', 'level')])
     filename = os.path.join(config.get('paths', 'log'), 'pymaster.log')
-    handler = logging.FileHandler(filename, mode='w')
+    handler = logging.FileHandler(filename, mode='a')
     handler.setFormatter(logging.Formatter(fmt=logfmt, datefmt=datefmt))
     log.addHandler(handler)
 
@@ -88,6 +90,4 @@ if (__name__ == "__main__"):
     if command == "--start":
         d.start()
     elif command == "--stop":
-        d.mystop()
-    elif command == "--restart":
-        d.myrestart()
+        d.stop()
