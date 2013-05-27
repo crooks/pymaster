@@ -59,7 +59,7 @@ class MailMessage():
             try:
                 self.mail2pool(k)
             except MailError, e:
-                log.info("Mail Error: %s", e)
+                log.debug("Mail Error: %s", e)
                 self.failed_msgs += 1
             self.inbox.remove(k)
         log.debug("Mail processing complete. Processed=%s, Pooled=%s, "

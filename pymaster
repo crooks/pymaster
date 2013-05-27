@@ -62,6 +62,8 @@ class MyDaemon(Daemon):
 
     def signal_handler(self, signum, frame):
         log.info("Caught SIGTERM, exiting cleanly.")
+        # Reset SIGTERM to its default handler, otherwise stop() will
+        # endlessly loop.
         signal.signal(signum, signal.SIG_DFL)
         self.idlog.close()
         self.chunkmgr.close()
@@ -84,10 +86,8 @@ if (__name__ == "__main__"):
     d = MyDaemon(config.get('general', 'pidfile'),
                  stderr=os.path.join(config.get('paths', 'log'), 'error.log'))
     if len(sys.argv) <= 1:
-        sys.stdout.write("Usage: --start, --stop, --restart\n")
+        sys.stdout.write("Usage: --start\n")
         sys.exit(0)
     command = sys.argv[1]
     if command == "--start":
         d.start()
-    elif command == "--stop":
-        d.stop()

@@ -198,7 +198,7 @@ class ChunkID(object):
                     os.remove(filename)
                     deleted_chunks += 1
                 else:
-                    log.error("%s: Pool filename does not exist during chunk "
+                    log.warn("%s: Pool filename does not exist during chunk "
                               "deletion.  What happened to it?", filename)
             else:
                 log.error("Expected to find chunk %s during chunk deletion "
