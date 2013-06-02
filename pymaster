@@ -36,17 +36,43 @@ import KeyManager
 
 class MyDaemon(Daemon):
     def run(self):
+        """Override the run function from the standard Python Daemon.  Did I
+           say standard?  There isn't a standard Daemon for Python2.x but this
+           is probably as close as it gets.
+        """
+        # First, load up the keyrings.
         pubring = KeyManager.Pubring()
         secring = KeyManager.Secring()
+        # Packet encoding requires the Public Keyring in order to encrypt
+        # messages to other remailers.
         encode = EncodePacket.Mixmaster(pubring)
+        # Fire up the PacketID log that prevents replay attacks on Mixmaster
+        # messages.  This (and the Chunk Manager) are only used within the
+        # DecodePacket process but initializing them here enables us to
+        # cleanly close them when we catch a SIGTERM.
         idlog = IDLog.PacketID()
+        # Chunkmgr handles reassembly of multipart messages.  This function
+        # is only performed on exit messages but as destinations can be
+        # whitelisted, even Middleman remailers can perform exit functions.
         chunkmgr = IDLog.ChunkID()
+        # The mail function reads the incoming mail queue and performs any
+        # processing required to turn each inbound message into an outbound
+        # message in the pool.
         mail = Mail.MailMessage(pubring, secring, idlog, encode, chunkmgr)
+        # The pool process handles the random selection of messages from the
+        # pool and the actual sending of them.  It requies PacketEncode
+        # functionality in order to generate dummies.
         pool = Pool.Pool(encode)
+        # Sleep dictates how many seconds between each loop of inbound mail
+        # checking.  Pool processing is also considered after each sleep interval
+        # but it only performed if the configured pool-interval has expired.
         sleep = timing.dhms_secs(config.get('general', 'interval'))
         self.idlog = idlog
         self.chunkmgr = chunkmgr
+        # Catch SIGTERM signals so we can close files cleanly before
+        # terminating.
         signal.signal(signal.SIGTERM, self.signal_handler)
+        # Begin an endless loop of mail and pool processing.
         while True:
             idlog.prune()
             chunkmgr.prune()
@@ -58,7 +84,9 @@ class MyDaemon(Daemon):
             try:
                 timing.sleep(sleep)
             except KeyboardInterrupt:
-                self.mystop()
+                self.idlog.close()
+                self.chunkmgr.close()
+                sys.exit(0)
 
     def signal_handler(self, signum, frame):
         log.info("Caught SIGTERM, exiting cleanly.")
